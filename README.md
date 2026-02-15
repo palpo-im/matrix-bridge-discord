@@ -21,6 +21,17 @@ cargo test -p matrix-bridge-discord --no-run
 cargo run -p matrix-bridge-discord
 ```
 
+## GitHub Actions Release Setup
+
+- Docker image workflow (`.github/workflows/docker.yml`) pushes images to:
+  - `ghcr.io/palpo-im/matrix-bridge-discord`
+  - `docker.io/<namespace>/matrix-bridge-discord`
+- Configure repository secrets for Docker Hub:
+  - `DOCKERHUB_USERNAME`
+  - `DOCKERHUB_TOKEN`
+- Optionally set repository variable `DOCKERHUB_NAMESPACE` if Docker Hub namespace differs from GitHub owner.
+- Binary release workflow (`.github/workflows/release.yml`) runs on tag push `v*` and uploads Windows/Linux/macOS binaries to GitHub Releases.
+
 ## Notes
 
 The repository and build system migration is complete.

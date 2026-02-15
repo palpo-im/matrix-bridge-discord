@@ -21,6 +21,17 @@ cargo test -p matrix-bridge-discord --no-run
 cargo run -p matrix-bridge-discord
 ```
 
+## GitHub Actions 发布配置
+
+- Docker 镜像工作流（`.github/workflows/docker.yml`）会发布到：
+  - `ghcr.io/palpo-im/matrix-bridge-discord`
+  - `docker.io/<namespace>/matrix-bridge-discord`
+- 需要在仓库 Secrets 中配置 Docker Hub 凭据：
+  - `DOCKERHUB_USERNAME`
+  - `DOCKERHUB_TOKEN`
+- 如果 Docker Hub 命名空间与 GitHub owner 不一致，可额外设置仓库变量 `DOCKERHUB_NAMESPACE`。
+- 二进制发布工作流（`.github/workflows/release.yml`）在推送 `v*` 标签时触发，上传 Windows/Linux/macOS 二进制到 GitHub Releases。
+
 ## 说明
 
 本次转移已完成"代码仓库与构建系统"的迁移闭环。
