@@ -1,0 +1,14 @@
+.git
+.github
+
+docs
+scripts
+config
+
+*.png
+*.db
+*.db.backup
+config.yaml
+discord-registration.yaml
+
+**/target

@@ -1,0 +1,223 @@
+use std::collections::HashSet;
+
+use crate::parsers::parse_prefixed_command;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModerationAction {
+    Kick,
+    Ban,
+    Unban,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DiscordCommandOutcome {
+    Ignored,
+    Reply(String),
+    ApproveRequested,
+    DenyRequested,
+    ModerationRequested {
+        action: ModerationAction,
+        matrix_user: String,
+    },
+    UnbridgeRequested,
+}
+
+#[derive(Debug, Clone)]
+pub struct DiscordCommandHandler {
+    prefix: &'static str,
+}
+
+impl Default for DiscordCommandHandler {
+    fn default() -> Self {
+        Self { prefix: "!matrix" }
+    }
+}
+
+impl DiscordCommandHandler {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn is_command(&self, message: &str) -> bool {
+        message.trim_start().starts_with(self.prefix)
+    }
+
+    pub fn handle(
+        &self,
+        message: &str,
+        is_channel_bridged: bool,
+        granted_permissions: &HashSet<String>,
+    ) -> DiscordCommandOutcome {
+        let parsed = match parse_prefixed_command(self.prefix, message) {
+            Some(parsed) => parsed,
+            None => return DiscordCommandOutcome::Ignored,
+        };
+
+        match parsed.command.as_str() {
+            "help" => DiscordCommandOutcome::Reply(
+                self.render_help(parsed.args.first().map(String::as_str)),
+            ),
+            "approve" => {
+                if !has_all_permissions(granted_permissions, &["MANAGE_WEBHOOKS"]) {
+                    return permission_denied();
+                }
+                DiscordCommandOutcome::ApproveRequested
+            }
+            "deny" => {
+                if !has_all_permissions(granted_permissions, &["MANAGE_WEBHOOKS"]) {
+                    return permission_denied();
+                }
+                DiscordCommandOutcome::DenyRequested
+            }
+            "kick" => self.handle_moderation(
+                parsed.args,
+                granted_permissions,
+                "KICK_MEMBERS",
+                ModerationAction::Kick,
+            ),
+            "ban" => self.handle_moderation(
+                parsed.args,
+                granted_permissions,
+                "BAN_MEMBERS",
+                ModerationAction::Ban,
+            ),
+            "unban" => self.handle_moderation(
+                parsed.args,
+                granted_permissions,
+                "BAN_MEMBERS",
+                ModerationAction::Unban,
+            ),
+            "unbridge" => {
+                if !has_all_permissions(
+                    granted_permissions,
+                    &["MANAGE_WEBHOOKS", "MANAGE_CHANNELS"],
+                ) {
+                    return permission_denied();
+                }
+                if !is_channel_bridged {
+                    return DiscordCommandOutcome::Reply(
+                        "This channel is not bridged to a plumbed matrix room".to_string(),
+                    );
+                }
+                DiscordCommandOutcome::UnbridgeRequested
+            }
+            _ => DiscordCommandOutcome::Reply(
+                "**ERROR:** unknown command. Try `!matrix help` to see all commands".to_string(),
+            ),
+        }
+    }
+
+    fn handle_moderation(
+        &self,
+        args: Vec<String>,
+        granted_permissions: &HashSet<String>,
+        needed_permission: &str,
+        action: ModerationAction,
+    ) -> DiscordCommandOutcome {
+        if !has_all_permissions(granted_permissions, &[needed_permission]) {
+            return permission_denied();
+        }
+        let matrix_user = args.join(" ").trim().to_string();
+        if matrix_user.is_empty() {
+            return DiscordCommandOutcome::Reply(format!(
+                "Invalid syntax. For more information try `!matrix help {}`",
+                action_keyword(&action),
+            ));
+        }
+        DiscordCommandOutcome::ModerationRequested {
+            action,
+            matrix_user,
+        }
+    }
+
+    fn render_help(&self, command: Option<&str>) -> String {
+        match command {
+            Some("approve") => "`!matrix approve`: Approve a pending bridge request".to_string(),
+            Some("deny") => "`!matrix deny`: Deny a pending bridge request".to_string(),
+            Some("kick") => "`!matrix kick <name>`: Kicks a user on the Matrix side".to_string(),
+            Some("ban") => "`!matrix ban <name>`: Bans a user on the Matrix side".to_string(),
+            Some("unban") => "`!matrix unban <name>`: Unbans a user on the Matrix side".to_string(),
+            Some("unbridge") => "`!matrix unbridge`: Unbridge Matrix rooms from this channel".to_string(),
+            Some(_) => "**ERROR:** unknown command! Try `!matrix help` to see all commands"
+                .to_string(),
+            None => {
+                "Available Commands:\n - `!matrix approve`: Approve a pending bridge request\n - `!matrix deny`: Deny a pending bridge request\n - `!matrix kick <name>`: Kicks a user on the Matrix side\n - `!matrix ban <name>`: Bans a user on the Matrix side\n - `!matrix unban <name>`: Unbans a user on the Matrix side\n - `!matrix unbridge`: Unbridge Matrix rooms from this channel".to_string()
+            }
+        }
+    }
+}
+
+fn action_keyword(action: &ModerationAction) -> &'static str {
+    match action {
+        ModerationAction::Kick => "kick",
+        ModerationAction::Ban => "ban",
+        ModerationAction::Unban => "unban",
+    }
+}
+
+fn has_all_permissions(granted: &HashSet<String>, required: &[&str]) -> bool {
+    required.iter().all(|perm| granted.contains(*perm))
+}
+
+fn permission_denied() -> DiscordCommandOutcome {
+    DiscordCommandOutcome::Reply(
+        "**ERROR:** insufficient permissions to use this command! Try `!matrix help` to see all available commands".to_string(),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::{DiscordCommandHandler, DiscordCommandOutcome, ModerationAction};
+
+    #[test]
+    fn ban_requires_permission() {
+        let handler = DiscordCommandHandler::new();
+        let permissions = HashSet::new();
+        let outcome = handler.handle("!matrix ban @alice:example.org", true, &permissions);
+        assert_eq!(
+            outcome,
+            DiscordCommandOutcome::Reply("**ERROR:** insufficient permissions to use this command! Try `!matrix help` to see all available commands".to_string()),
+        );
+    }
+
+    #[test]
+    fn ban_command_returns_target() {
+        let handler = DiscordCommandHandler::new();
+        let permissions = HashSet::from(["BAN_MEMBERS".to_string()]);
+        let outcome = handler.handle("!matrix ban @alice:example.org", true, &permissions);
+        assert_eq!(
+            outcome,
+            DiscordCommandOutcome::ModerationRequested {
+                action: ModerationAction::Ban,
+                matrix_user: "@alice:example.org".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn unbridge_requires_both_permissions() {
+        let handler = DiscordCommandHandler::new();
+        let permissions = HashSet::from(["MANAGE_WEBHOOKS".to_string()]);
+        let outcome = handler.handle("!matrix unbridge", true, &permissions);
+        assert_eq!(
+            outcome,
+            DiscordCommandOutcome::Reply("**ERROR:** insufficient permissions to use this command! Try `!matrix help` to see all available commands".to_string()),
+        );
+    }
+
+    #[test]
+    fn unbridge_rejects_when_not_bridged() {
+        let handler = DiscordCommandHandler::new();
+        let permissions =
+            HashSet::from(["MANAGE_WEBHOOKS".to_string(), "MANAGE_CHANNELS".to_string()]);
+        let outcome = handler.handle("!matrix unbridge", false, &permissions);
+        assert_eq!(
+            outcome,
+            DiscordCommandOutcome::Reply(
+                "This channel is not bridged to a plumbed matrix room".to_string()
+            )
+        );
+    }
+}

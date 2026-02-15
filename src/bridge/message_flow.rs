@@ -1,0 +1,373 @@
+use std::sync::Arc;
+
+use serde_json::Value;
+
+use crate::discord::DiscordClient;
+use crate::matrix::{MatrixAppservice, MatrixEvent};
+use crate::parsers::{DiscordToMatrixConverter, MatrixToDiscordConverter, MessageUtils};
+
+const ATTACHMENT_TYPES: &[&str] = &["m.image", "m.audio", "m.video", "m.file", "m.sticker"];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MessageRelation {
+    Reply { event_id: String },
+    Replace { event_id: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MessageAttachment {
+    pub name: String,
+    pub url: String,
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MatrixInboundMessage {
+    pub event_id: Option<String>,
+    pub room_id: String,
+    pub sender: String,
+    pub body: String,
+    pub relation: Option<MessageRelation>,
+    pub attachments: Vec<MessageAttachment>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiscordInboundMessage {
+    pub channel_id: String,
+    pub sender_id: String,
+    pub content: String,
+    pub attachments: Vec<String>,
+    pub reply_to: Option<String>,
+    pub edit_of: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutboundDiscordMessage {
+    pub content: String,
+    pub reply_to: Option<String>,
+    pub edit_of: Option<String>,
+    pub attachments: Vec<String>,
+}
+
+impl OutboundDiscordMessage {
+    pub fn render_content(&self) -> String {
+        let mut parts = Vec::new();
+        if let Some(reply_to) = &self.reply_to {
+            parts.push(format!("(reply:{reply_to})"));
+        }
+        if let Some(edit_of) = &self.edit_of {
+            parts.push(format!("(edit:{edit_of})"));
+        }
+        if !self.content.is_empty() {
+            parts.push(self.content.clone());
+        }
+        if !self.attachments.is_empty() {
+            parts.push(self.attachments.join(" "));
+        }
+        parts.join("\n")
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutboundMatrixMessage {
+    pub body: String,
+    pub reply_to: Option<String>,
+    pub edit_of: Option<String>,
+    pub attachments: Vec<String>,
+}
+
+impl OutboundMatrixMessage {
+    pub fn render_body(&self) -> String {
+        let mut body = self.body.clone();
+        if let Some(reply_to) = &self.reply_to {
+            body = format!("> reply to {reply_to}\n{body}");
+        }
+        if let Some(edit_of) = &self.edit_of {
+            body = format!("* {body}\n(edit:{edit_of})");
+        }
+        if !self.attachments.is_empty() {
+            if !body.is_empty() {
+                body.push('\n');
+            }
+            body.push_str(&self.attachments.join("\n"));
+        }
+        body
+    }
+}
+
+#[derive(Clone)]
+pub struct MessageFlow {
+    matrix_converter: Arc<MatrixToDiscordConverter>,
+    discord_converter: Arc<DiscordToMatrixConverter>,
+}
+
+impl MessageFlow {
+    pub fn new(matrix_client: Arc<MatrixAppservice>, discord_client: Arc<DiscordClient>) -> Self {
+        Self {
+            matrix_converter: Arc::new(MatrixToDiscordConverter::new(matrix_client)),
+            discord_converter: Arc::new(DiscordToMatrixConverter::new(discord_client)),
+        }
+    }
+
+    pub fn parse_matrix_event(event: &MatrixEvent) -> Option<MatrixInboundMessage> {
+        if !matches!(event.event_type.as_str(), "m.room.message" | "m.sticker") {
+            return None;
+        }
+
+        let content = event.content.as_ref()?;
+        let content_for_body = content
+            .get("m.new_content")
+            .filter(|value| value.is_object())
+            .unwrap_or(content);
+        let body = MessageUtils::extract_plain_text(content_for_body);
+
+        let msgtype = content_for_body
+            .get("msgtype")
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| {
+                if event.event_type == "m.sticker" {
+                    "m.sticker"
+                } else {
+                    "m.text"
+                }
+            })
+            .to_string();
+
+        let relation = parse_relation(content);
+        let attachments = parse_attachments(content_for_body, &msgtype);
+
+        if body.is_empty() && attachments.is_empty() {
+            return None;
+        }
+
+        Some(MatrixInboundMessage {
+            event_id: event.event_id.clone(),
+            room_id: event.room_id.clone(),
+            sender: event.sender.clone(),
+            body,
+            relation,
+            attachments,
+        })
+    }
+
+    pub fn matrix_to_discord(&self, message: &MatrixInboundMessage) -> OutboundDiscordMessage {
+        let reply_to = match &message.relation {
+            Some(MessageRelation::Reply { event_id }) => Some(event_id.clone()),
+            _ => None,
+        };
+        let edit_of = match &message.relation {
+            Some(MessageRelation::Replace { event_id }) => Some(event_id.clone()),
+            _ => None,
+        };
+        let attachments = message
+            .attachments
+            .iter()
+            .map(|attachment| attachment.url.clone())
+            .collect();
+
+        OutboundDiscordMessage {
+            content: self.matrix_converter.format_for_discord(&message.body),
+            reply_to,
+            edit_of,
+            attachments,
+        }
+    }
+
+    pub fn discord_to_matrix(&self, message: &DiscordInboundMessage) -> OutboundMatrixMessage {
+        OutboundMatrixMessage {
+            body: self.discord_converter.format_for_matrix(&message.content),
+            reply_to: message.reply_to.clone(),
+            edit_of: message.edit_of.clone(),
+            attachments: message.attachments.clone(),
+        }
+    }
+}
+
+fn parse_relation(content: &Value) -> Option<MessageRelation> {
+    let relates_to = content.get("m.relates_to")?;
+    if let Some(reply_event_id) = relates_to
+        .get("m.in_reply_to")
+        .and_then(|inner| inner.get("event_id"))
+        .and_then(Value::as_str)
+    {
+        return Some(MessageRelation::Reply {
+            event_id: reply_event_id.to_string(),
+        });
+    }
+    if relates_to
+        .get("rel_type")
+        .and_then(Value::as_str)
+        .is_some_and(|kind| kind == "m.replace")
+    {
+        if let Some(edit_event_id) = relates_to.get("event_id").and_then(Value::as_str) {
+            return Some(MessageRelation::Replace {
+                event_id: edit_event_id.to_string(),
+            });
+        }
+    }
+    None
+}
+
+fn parse_attachments(content: &Value, msgtype: &str) -> Vec<MessageAttachment> {
+    if !ATTACHMENT_TYPES.contains(&msgtype) {
+        return Vec::new();
+    }
+    let Some(url) = content.get("url").and_then(Value::as_str) else {
+        return Vec::new();
+    };
+    let name = content
+        .get("body")
+        .and_then(Value::as_str)
+        .unwrap_or("matrix-media")
+        .to_string();
+
+    vec![MessageAttachment {
+        name,
+        url: url.to_string(),
+        kind: msgtype.to_string(),
+    }]
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use serde_json::json;
+
+    use super::{DiscordInboundMessage, MessageFlow, MessageRelation};
+    use crate::config::{
+        AuthConfig, BridgeConfig, ChannelConfig, Config, DatabaseConfig, GhostConfig,
+        LoggingConfig, MetricsConfig, RoomConfig,
+    };
+    use crate::discord::DiscordClient;
+    use crate::matrix::{MatrixAppservice, MatrixEvent};
+
+    fn test_config() -> Arc<Config> {
+        Arc::new(Config {
+            bridge: BridgeConfig {
+                domain: "example.org".to_string(),
+                port: 9005,
+                bind_address: "127.0.0.1".to_string(),
+                homeserver_url: None,
+            },
+            auth: AuthConfig {
+                bot_token: "token".to_string(),
+                client_id: None,
+                client_secret: None,
+            },
+            logging: LoggingConfig {
+                level: "info".to_string(),
+                format: "pretty".to_string(),
+                file: None,
+            },
+            database: DatabaseConfig {
+                connection_string: "postgres://localhost/bridge".to_string(),
+                max_connections: Some(1),
+                min_connections: Some(1),
+            },
+            room: RoomConfig {
+                default_visibility: "private".to_string(),
+                room_alias_prefix: "_discord".to_string(),
+                enable_room_creation: true,
+            },
+            channel: ChannelConfig {
+                enable_channel_creation: false,
+                channel_name_format: ":name".to_string(),
+                topic_format: ":topic".to_string(),
+            },
+            ghosts: GhostConfig {
+                username_template: "_discord_:id".to_string(),
+                displayname_template: ":username".to_string(),
+                avatar_url_template: None,
+            },
+            metrics: MetricsConfig::default(),
+        })
+    }
+
+    #[tokio::test]
+    async fn parse_matrix_event_extracts_reply_and_attachment() {
+        let event = MatrixEvent {
+            event_id: Some("$event".to_string()),
+            event_type: "m.room.message".to_string(),
+            room_id: "!room:example.org".to_string(),
+            sender: "@alice:example.org".to_string(),
+            content: Some(json!({
+                "msgtype": "m.image",
+                "body": "cat.png",
+                "url": "mxc://example.org/cat",
+                "m.relates_to": {
+                    "m.in_reply_to": {
+                        "event_id": "$source"
+                    }
+                }
+            })),
+            timestamp: None,
+        };
+
+        let parsed = MessageFlow::parse_matrix_event(&event).expect("matrix message should parse");
+        assert_eq!(
+            parsed.relation,
+            Some(MessageRelation::Reply {
+                event_id: "$source".to_string()
+            })
+        );
+        assert_eq!(parsed.attachments.len(), 1);
+        assert_eq!(parsed.attachments[0].url, "mxc://example.org/cat");
+    }
+
+    #[tokio::test]
+    async fn matrix_to_discord_marks_edit_messages() {
+        let config = test_config();
+        let matrix_client = Arc::new(MatrixAppservice::new(config.clone()).await.expect("matrix"));
+        let discord_client = Arc::new(DiscordClient::new(config).await.expect("discord"));
+        let flow = MessageFlow::new(matrix_client, discord_client);
+
+        let event = MatrixEvent {
+            event_id: Some("$event".to_string()),
+            event_type: "m.room.message".to_string(),
+            room_id: "!room:example.org".to_string(),
+            sender: "@alice:example.org".to_string(),
+            content: Some(json!({
+                "msgtype": "m.text",
+                "body": "new body",
+                "m.relates_to": {
+                    "rel_type": "m.replace",
+                    "event_id": "$old"
+                },
+                "m.new_content": {
+                    "msgtype": "m.text",
+                    "body": "new body"
+                }
+            })),
+            timestamp: None,
+        };
+        let inbound = MessageFlow::parse_matrix_event(&event).expect("matrix message");
+        let outbound = flow.matrix_to_discord(&inbound);
+        assert_eq!(outbound.edit_of, Some("$old".to_string()));
+        assert_eq!(outbound.content, "new body".to_string());
+    }
+
+    #[tokio::test]
+    async fn discord_to_matrix_sanitizes_markdown_and_keeps_reply() {
+        let config = test_config();
+        let matrix_client = Arc::new(MatrixAppservice::new(config.clone()).await.expect("matrix"));
+        let discord_client = Arc::new(DiscordClient::new(config).await.expect("discord"));
+        let flow = MessageFlow::new(matrix_client, discord_client);
+
+        let outbound = flow.discord_to_matrix(&DiscordInboundMessage {
+            channel_id: "123".to_string(),
+            sender_id: "55".to_string(),
+            content: "*bold*".to_string(),
+            attachments: vec!["https://example.org/a.png".to_string()],
+            reply_to: Some("discord-msg-1".to_string()),
+            edit_of: None,
+        });
+
+        assert_eq!(outbound.body, "\\*bold\\*".to_string());
+        assert_eq!(outbound.reply_to, Some("discord-msg-1".to_string()));
+        assert_eq!(
+            outbound.attachments,
+            vec!["https://example.org/a.png".to_string()]
+        );
+    }
+}
