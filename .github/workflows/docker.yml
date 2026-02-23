@@ -9,7 +9,6 @@ on:
 
 env:
   IMAGE_NAME: matrix-bridge-discord
-  DOCKERHUB_USER: chrislearn
 
 jobs:
   docker:
