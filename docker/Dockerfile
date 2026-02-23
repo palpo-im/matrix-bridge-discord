@@ -1,4 +1,4 @@
-FROM rust:1.75 as builder
+FROM rust:1.93 as builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
