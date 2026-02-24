@@ -10,6 +10,7 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
+    libpq5 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -m -u 1000 appuser
