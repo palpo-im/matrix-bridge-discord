@@ -1,12 +1,13 @@
-pub use self::stores::{RoomStore, UserStore};
-pub use self::models::{RoomMapping, UserMapping, ProcessedEvent};
 pub use self::error::DatabaseError;
 pub use self::manager::DatabaseManager;
+pub use self::models::{ProcessedEvent, RoomMapping, UserMapping};
+pub use self::stores::{RoomStore, UserStore};
 
-pub mod manager;
-pub mod stores;
-pub mod models;
 pub mod error;
+pub mod manager;
+pub mod models;
+pub mod schema;
+pub mod stores;
 
 #[cfg(feature = "postgres")]
 pub mod postgres;

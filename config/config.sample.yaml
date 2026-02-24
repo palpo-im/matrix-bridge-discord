@@ -18,7 +18,7 @@ logging:
 
 database:
   connection_string: "postgresql://user:password@localhost/matrix_discord"
-  # For SQLite use: "sqlite:database.db"
+  # PostgreSQL DSN
   max_connections: 10             # Maximum database connections
   min_connections: 1              # Minimum database connections
 

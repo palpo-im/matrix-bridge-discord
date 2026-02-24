@@ -15,11 +15,23 @@ pub fn create_router() -> Router {
             Router::with_path("_matrix")
                 .push(Router::with_path("rooms").get(list_rooms))
                 .push(Router::with_path("bridges").post(create_bridge))
-                .push(Router::with_path("bridges/{id}").get(get_bridge_info).delete(delete_bridge)),
+                .push(
+                    Router::with_path("bridges/{id}")
+                        .get(get_bridge_info)
+                        .delete(delete_bridge),
+                ),
         )
         .push(
             Router::with_path("admin")
-                .push(Router::with_path("bridges").get(list_rooms).post(create_bridge))
-                .push(Router::with_path("bridges/{id}").get(get_bridge_info).delete(delete_bridge)),
+                .push(
+                    Router::with_path("bridges")
+                        .get(list_rooms)
+                        .post(create_bridge),
+                )
+                .push(
+                    Router::with_path("bridges/{id}")
+                        .get(get_bridge_info)
+                        .delete(delete_bridge),
+                ),
         )
 }

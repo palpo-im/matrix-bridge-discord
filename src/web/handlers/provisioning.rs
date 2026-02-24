@@ -1,6 +1,6 @@
 use chrono::Utc;
-use serde_json::json;
 use salvo::prelude::*;
+use serde_json::json;
 
 use crate::database::RoomMapping;
 use crate::web::web_state;
@@ -30,7 +30,11 @@ pub async fn list_rooms(req: &mut Request, res: &mut Response) {
             })));
         }
         Err(err) => {
-            render_error(res, StatusCode::INTERNAL_SERVER_ERROR, &format!("database error: {}", err));
+            render_error(
+                res,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("database error: {}", err),
+            );
         }
     }
 }
@@ -40,14 +44,22 @@ pub async fn create_bridge(req: &mut Request, res: &mut Response) {
     let matrix_room_id = match req.query::<String>("matrix_room_id") {
         Some(v) if !v.is_empty() => v,
         _ => {
-            render_error(res, StatusCode::BAD_REQUEST, "missing matrix_room_id query parameter");
+            render_error(
+                res,
+                StatusCode::BAD_REQUEST,
+                "missing matrix_room_id query parameter",
+            );
             return;
         }
     };
     let discord_channel_id = match req.query::<String>("discord_channel_id") {
         Some(v) if !v.is_empty() => v,
         _ => {
-            render_error(res, StatusCode::BAD_REQUEST, "missing discord_channel_id query parameter");
+            render_error(
+                res,
+                StatusCode::BAD_REQUEST,
+                "missing discord_channel_id query parameter",
+            );
             return;
         }
     };
@@ -67,19 +79,34 @@ pub async fn create_bridge(req: &mut Request, res: &mut Response) {
         }
         Ok(None) => {}
         Err(err) => {
-            render_error(res, StatusCode::INTERNAL_SERVER_ERROR, &format!("database error: {}", err));
+            render_error(
+                res,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("database error: {}", err),
+            );
             return;
         }
     }
 
-    match room_store.get_room_by_discord_channel(&discord_channel_id).await {
+    match room_store
+        .get_room_by_discord_channel(&discord_channel_id)
+        .await
+    {
         Ok(Some(_)) => {
-            render_error(res, StatusCode::CONFLICT, "discord channel is already bridged");
+            render_error(
+                res,
+                StatusCode::CONFLICT,
+                "discord channel is already bridged",
+            );
             return;
         }
         Ok(None) => {}
         Err(err) => {
-            render_error(res, StatusCode::INTERNAL_SERVER_ERROR, &format!("database error: {}", err));
+            render_error(
+                res,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("database error: {}", err),
+            );
             return;
         }
     }
@@ -104,7 +131,11 @@ pub async fn create_bridge(req: &mut Request, res: &mut Response) {
             })));
         }
         Err(err) => {
-            render_error(res, StatusCode::INTERNAL_SERVER_ERROR, &format!("database error: {}", err));
+            render_error(
+                res,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("database error: {}", err),
+            );
         }
     }
 }
@@ -119,12 +150,21 @@ pub async fn delete_bridge(req: &mut Request, res: &mut Response) {
         }
     };
 
-    match web_state().db_manager.room_store().delete_room_mapping(id).await {
+    match web_state()
+        .db_manager
+        .room_store()
+        .delete_room_mapping(id)
+        .await
+    {
         Ok(()) => {
             res.render(Json(json!({ "ok": true, "id": id })));
         }
         Err(err) => {
-            render_error(res, StatusCode::INTERNAL_SERVER_ERROR, &format!("database error: {}", err));
+            render_error(
+                res,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("database error: {}", err),
+            );
         }
     }
 }
@@ -147,7 +187,11 @@ pub async fn get_bridge_info(req: &mut Request, res: &mut Response) {
             render_error(res, StatusCode::NOT_FOUND, "bridge not found");
         }
         Err(err) => {
-            render_error(res, StatusCode::INTERNAL_SERVER_ERROR, &format!("database error: {}", err));
+            render_error(
+                res,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("database error: {}", err),
+            );
         }
     }
 }

@@ -36,7 +36,11 @@ impl DiscordToMatrixConverter {
         MessageUtils::sanitize_markdown(message)
     }
 
-    pub async fn convert_message(&self, discord_message: &str, matrix_room_id: &str) -> Result<BridgeMessage> {
+    pub async fn convert_message(
+        &self,
+        discord_message: &str,
+        matrix_room_id: &str,
+    ) -> Result<BridgeMessage> {
         Ok(BridgeMessage {
             source_platform: "discord".to_string(),
             target_platform: "matrix".to_string(),

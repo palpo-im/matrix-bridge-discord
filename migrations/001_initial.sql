@@ -1,6 +1,6 @@
 -- 用户映射表
 CREATE TABLE IF NOT EXISTS user_mappings (
-    id SERIAL PRIMARY KEY,
+    id BIGSERIAL PRIMARY KEY,
     matrix_user_id TEXT NOT NULL UNIQUE,
     discord_user_id TEXT NOT NULL UNIQUE,
     discord_username TEXT NOT NULL,
@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS user_mappings (
 
 -- 房间映射表
 CREATE TABLE IF NOT EXISTS room_mappings (
-    id SERIAL PRIMARY KEY,
+    id BIGSERIAL PRIMARY KEY,
     matrix_room_id TEXT NOT NULL UNIQUE,
     discord_channel_id TEXT NOT NULL UNIQUE,
     discord_channel_name TEXT NOT NULL,
@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS room_mappings (
 
 -- 事件跟踪表
 CREATE TABLE IF NOT EXISTS processed_events (
-    id SERIAL PRIMARY KEY,
+    id BIGSERIAL PRIMARY KEY,
     event_id TEXT NOT NULL UNIQUE,
     event_type TEXT NOT NULL,
     source TEXT NOT NULL, -- 'matrix' or 'discord'
@@ -32,8 +32,8 @@ CREATE TABLE IF NOT EXISTS processed_events (
 
 -- 用户活动表
 CREATE TABLE IF NOT EXISTS user_activity (
-    id SERIAL PRIMARY KEY,
-    user_mapping_id INTEGER NOT NULL REFERENCES user_mappings(id) ON DELETE CASCADE,
+    id BIGSERIAL PRIMARY KEY,
+    user_mapping_id BIGINT NOT NULL REFERENCES user_mappings(id) ON DELETE CASCADE,
     activity_type TEXT NOT NULL,
     timestamp TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     metadata JSONB

@@ -1,5 +1,5 @@
-use serde_json::json;
 use salvo::prelude::*;
+use serde_json::json;
 
 use crate::web::web_state;
 

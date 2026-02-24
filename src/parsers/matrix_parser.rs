@@ -36,7 +36,11 @@ impl MatrixToDiscordConverter {
         message.to_string()
     }
 
-    pub async fn convert_message(&self, matrix_event: &MatrixEvent, discord_channel_id: &str) -> Result<BridgeMessage> {
+    pub async fn convert_message(
+        &self,
+        matrix_event: &MatrixEvent,
+        discord_channel_id: &str,
+    ) -> Result<BridgeMessage> {
         let plain = matrix_event
             .content
             .as_ref()

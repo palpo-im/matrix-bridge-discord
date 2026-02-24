@@ -55,7 +55,10 @@ impl WebServer {
     }
 
     pub async fn start(&self) -> Result<()> {
-        let bind_addr = format!("{}:{}", self.config.bridge.bind_address, self.config.bridge.port);
+        let bind_addr = format!(
+            "{}:{}",
+            self.config.bridge.bind_address, self.config.bridge.port
+        );
         info!("Starting web server on {}", bind_addr);
 
         let acceptor = TcpListener::new(bind_addr).bind().await;
