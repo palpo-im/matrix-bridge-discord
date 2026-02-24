@@ -11,7 +11,7 @@ use tracing::{error, info};
 mod bridge;
 mod cli;
 mod config;
-mod database;
+mod db;
 mod discord;
 mod matrix;
 mod parsers;
@@ -28,7 +28,7 @@ async fn main() -> Result<()> {
     let config = Arc::new(Config::load()?);
     info!("Matrix-Discord Bridge starting up");
 
-    let db_manager = Arc::new(database::DatabaseManager::new(&config.database).await?);
+    let db_manager = Arc::new(db::DatabaseManager::new(&config.database).await?);
     db_manager.migrate().await?;
 
     let matrix_client = Arc::new(matrix::MatrixAppservice::new(config.clone()).await?);

@@ -8,7 +8,7 @@ use tracing::info;
 
 use crate::bridge::BridgeCore;
 use crate::config::Config;
-use crate::database::DatabaseManager;
+use crate::db::DatabaseManager;
 use crate::matrix::MatrixAppservice;
 
 pub mod handlers;

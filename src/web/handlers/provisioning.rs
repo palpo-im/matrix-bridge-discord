@@ -2,7 +2,7 @@ use chrono::Utc;
 use salvo::prelude::*;
 use serde_json::json;
 
-use crate::database::RoomMapping;
+use crate::db::RoomMapping;
 use crate::web::web_state;
 
 fn render_error(res: &mut Response, status: StatusCode, message: &str) {

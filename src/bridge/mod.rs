@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use tracing::{debug, info};
 
-use crate::database::{DatabaseManager, RoomMapping};
+use crate::db::{DatabaseManager, RoomMapping};
 use crate::discord::{
     DiscordClient, DiscordCommandHandler, DiscordCommandOutcome, ModerationAction,
 };

@@ -1,9 +1,9 @@
 use crate::config::DatabaseConfig;
-use crate::database::{DatabaseError, RoomStore, UserStore};
+use crate::db::{DatabaseError, RoomStore, UserStore};
 use std::sync::Arc;
 
 #[cfg(feature = "postgres")]
-use crate::database::postgres::{PostgresRoomStore, PostgresUserStore};
+use crate::db::postgres::{PostgresRoomStore, PostgresUserStore};
 #[cfg(feature = "postgres")]
 use diesel::pg::PgConnection;
 #[cfg(feature = "postgres")]

@@ -3,8 +3,8 @@ use chrono::{DateTime, Utc};
 use diesel::pg::PgConnection;
 use diesel::prelude::*;
 
-use crate::database::manager::Pool;
-use crate::database::schema::{room_mappings, user_mappings};
+use crate::db::manager::Pool;
+use crate::db::schema::{room_mappings, user_mappings};
 
 use super::{
     models::{RoomMapping, UserMapping},
@@ -141,7 +141,7 @@ impl super::RoomStore for PostgresRoomStore {
         let pool = self.pool.clone();
         let channel_id = channel_id.to_string();
         with_connection(pool, move |conn| {
-            use crate::database::schema::room_mappings::dsl::*;
+            use crate::db::schema::room_mappings::dsl::*;
             room_mappings
                 .filter(discord_channel_id.eq(channel_id))
                 .select(DbRoomMapping::as_select())
@@ -160,7 +160,7 @@ impl super::RoomStore for PostgresRoomStore {
         let pool = self.pool.clone();
         let room_id = room_id.to_string();
         with_connection(pool, move |conn| {
-            use crate::database::schema::room_mappings::dsl::*;
+            use crate::db::schema::room_mappings::dsl::*;
             room_mappings
                 .filter(matrix_room_id.eq(room_id))
                 .select(DbRoomMapping::as_select())
@@ -175,7 +175,7 @@ impl super::RoomStore for PostgresRoomStore {
     async fn get_room_by_id(&self, mapping_id: i64) -> Result<Option<RoomMapping>, DatabaseError> {
         let pool = self.pool.clone();
         with_connection(pool, move |conn| {
-            use crate::database::schema::room_mappings::dsl::*;
+            use crate::db::schema::room_mappings::dsl::*;
             room_mappings
                 .filter(id.eq(mapping_id))
                 .select(DbRoomMapping::as_select())
@@ -194,7 +194,7 @@ impl super::RoomStore for PostgresRoomStore {
     ) -> Result<Vec<RoomMapping>, DatabaseError> {
         let pool = self.pool.clone();
         with_connection(pool, move |conn| {
-            use crate::database::schema::room_mappings::dsl::*;
+            use crate::db::schema::room_mappings::dsl::*;
             room_mappings
                 .order(id.desc())
                 .limit(limit)
@@ -281,7 +281,7 @@ impl super::UserStore for PostgresUserStore {
         let pool = self.pool.clone();
         let discord_id = discord_id.to_string();
         with_connection(pool, move |conn| {
-            use crate::database::schema::user_mappings::dsl::*;
+            use crate::db::schema::user_mappings::dsl::*;
             user_mappings
                 .filter(discord_user_id.eq(discord_id))
                 .select(DbUserMapping::as_select())
