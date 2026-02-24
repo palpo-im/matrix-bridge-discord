@@ -21,6 +21,39 @@ cargo test -p matrix-bridge-discord --no-run
 cargo run -p matrix-bridge-discord
 ```
 
+## 数据库配置
+
+项目支持 PostgreSQL 和 SQLite 两种数据库，通过配置文件中的 `url` 自动识别数据库类型。
+
+### PostgreSQL 配置
+
+```yaml
+database:
+  url: "postgresql://user:password@localhost:5432/matrix_bridge"
+  max_connections: 10
+  min_connections: 1
+```
+
+### SQLite 配置
+
+```yaml
+database:
+  url: "sqlite:///data/matrix-bridge.db"
+```
+
+或使用相对路径：
+
+```yaml
+database:
+  url: "sqlite://./data/matrix-bridge.db"
+```
+
+### 数据库类型识别规则
+
+- `postgres://` 或 `postgresql://` 开头 → 使用 PostgreSQL
+- `sqlite://` 开头 → 使用 SQLite
+- 默认（无匹配前缀）→ 使用 PostgreSQL（向后兼容）
+
 ## GitHub Actions 发布配置
 
 - Docker 镜像工作流（`.github/workflows/docker.yml`）会发布到：

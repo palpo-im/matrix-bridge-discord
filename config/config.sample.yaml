@@ -17,8 +17,24 @@ logging:
   file: null                      # Optional: log file path
 
 database:
-  connection_string: "postgresql://user:password@localhost/matrix_discord"
-  # PostgreSQL DSN
+  # Database URL
+  # The database type is automatically detected based on the prefix:
+  #
+  # PostgreSQL:
+  #   - postgresql://user:password@localhost:5432/dbname
+  #   - postgres://user:password@localhost:5432/dbname
+  #
+  # SQLite:
+  #   - sqlite:///path/to/database.db
+  #   - sqlite://data/matrix-bridge.db
+  #
+  # Examples:
+  #   url: "postgresql://bridge_user:secure_password@localhost:5432/matrix_bridge"
+  #   url: "sqlite:///data/matrix-bridge.db"
+  #
+  url: "postgresql://user:password@localhost/matrix_discord"
+
+  # Connection pool settings (PostgreSQL only)
   max_connections: 10             # Maximum database connections
   min_connections: 1              # Minimum database connections
 

@@ -14,3 +14,6 @@ pub mod postgres;
 
 #[cfg(feature = "sqlite")]
 pub mod sqlite;
+
+#[cfg(feature = "sqlite")]
+pub mod schema_sqlite;

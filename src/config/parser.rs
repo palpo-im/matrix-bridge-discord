@@ -47,11 +47,61 @@ pub struct LoggingConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DatabaseConfig {
-    pub connection_string: String,
+    pub url: String,
     #[serde(default)]
     pub max_connections: Option<u32>,
     #[serde(default)]
     pub min_connections: Option<u32>,
+}
+
+impl DatabaseConfig {
+    /// Detect database type based on URL prefix
+    pub fn db_type(&self) -> DbType {
+        if self.url.starts_with("sqlite://") {
+            DbType::Sqlite
+        } else if self.url.starts_with("postgres://")
+            || self.url.starts_with("postgresql://")
+        {
+            DbType::Postgres
+        } else {
+            // Default to PostgreSQL for backward compatibility
+            DbType::Postgres
+        }
+    }
+
+    /// Get the database URL
+    pub fn connection_string(&self) -> String {
+        self.url.clone()
+    }
+
+    /// Get the SQLite file path (without the sqlite:// prefix)
+    pub fn sqlite_path(&self) -> Option<String> {
+        if let DbType::Sqlite = self.db_type() {
+            Some(self.url.strip_prefix("sqlite://").unwrap_or(&self.url).to_string())
+        } else {
+            None
+        }
+    }
+
+    pub fn max_connections(&self) -> Option<u32> {
+        match self.db_type() {
+            DbType::Postgres => self.max_connections,
+            DbType::Sqlite => Some(1), // SQLite is single-connection by default
+        }
+    }
+
+    pub fn min_connections(&self) -> Option<u32> {
+        match self.db_type() {
+            DbType::Postgres => self.min_connections,
+            DbType::Sqlite => Some(1),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DbType {
+    Postgres,
+    Sqlite,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -126,7 +176,7 @@ impl Config {
             ));
         }
 
-        if self.database.connection_string.is_empty() {
+        if self.database.connection_string().is_empty() {
             return Err(ConfigError::InvalidConfig(
                 "database.connection_string cannot be empty".to_string(),
             ));

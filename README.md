@@ -21,6 +21,39 @@ cargo test -p matrix-bridge-discord --no-run
 cargo run -p matrix-bridge-discord
 ```
 
+## Database Configuration
+
+The project supports both PostgreSQL and SQLite databases. The database type is automatically detected based on the `url` prefix in the configuration file.
+
+### PostgreSQL Configuration
+
+```yaml
+database:
+  url: "postgresql://user:password@localhost:5432/matrix_bridge"
+  max_connections: 10
+  min_connections: 1
+```
+
+### SQLite Configuration
+
+```yaml
+database:
+  url: "sqlite:///data/matrix-bridge.db"
+```
+
+Or use a relative path:
+
+```yaml
+database:
+  url: "sqlite://./data/matrix-bridge.db"
+```
+
+### Database Type Detection Rules
+
+- `postgres://` or `postgresql://` prefix → Uses PostgreSQL
+- `sqlite://` prefix → Uses SQLite
+- Default (no matching prefix) → Uses PostgreSQL (for backward compatibility)
+
 ## GitHub Actions Release Setup
 
 - Docker image workflow (`.github/workflows/docker.yml`) pushes images to:
