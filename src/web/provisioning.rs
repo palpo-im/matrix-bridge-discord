@@ -63,9 +63,6 @@ pub async fn create_bridge(req: &mut Request, res: &mut Response) {
             return;
         }
     };
-    let discord_channel_name = req
-        .query::<String>("discord_channel_name")
-        .unwrap_or_else(|| discord_channel_id.clone());
     let discord_guild_id = req
         .query::<String>("discord_guild_id")
         .unwrap_or_else(|| "unknown_guild".to_string());
