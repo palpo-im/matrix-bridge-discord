@@ -124,13 +124,35 @@ impl BridgeCore {
             .map(crate::parsers::MessageUtils::extract_plain_text)
             .unwrap_or_default();
 
+        debug!(
+            "matrix inbound message event_id={:?} room_id={} sender={} type={} body_len={} body_preview={}",
+            event.event_id,
+            event.room_id,
+            event.sender,
+            event.event_type,
+            body.len(),
+            preview_text(&body)
+        );
+
         let room_mapping = self
             .db_manager
             .room_store()
             .get_room_by_matrix_room(&event.room_id)
             .await?;
 
+        debug!(
+            "matrix inbound mapping lookup room_id={} mapped={}",
+            event.room_id,
+            room_mapping.is_some()
+        );
+
         if self.matrix_command_handler.is_command(&body) {
+            debug!(
+                "matrix inbound command detected room_id={} sender={} command_preview={}",
+                event.room_id,
+                event.sender,
+                preview_text(&body)
+            );
             let has_permissions = self
                 .matrix_client
                 .check_permission(
@@ -142,6 +164,12 @@ impl BridgeCore {
                 )
                 .await
                 .unwrap_or(false);
+            debug!(
+                "matrix command permission result room_id={} sender={} granted={}",
+                event.room_id,
+                event.sender,
+                has_permissions
+            );
             let outcome = self
                 .matrix_command_handler
                 .handle(&body, room_mapping.is_some(), |_| Ok(has_permissions));
@@ -150,13 +178,32 @@ impl BridgeCore {
         }
 
         let Some(mapping) = room_mapping else {
+            debug!(
+                "matrix inbound dropped room_id={} reason=no_discord_mapping",
+                event.room_id
+            );
             return Ok(());
         };
         let Some(message) = MessageFlow::parse_matrix_event(event) else {
+            debug!(
+                "matrix inbound dropped room_id={} event_id={:?} reason=unsupported_or_unparseable",
+                event.room_id,
+                event.event_id
+            );
             return Ok(());
         };
 
         let outbound = self.message_flow.matrix_to_discord(&message);
+        debug!(
+            "matrix->discord outbound prepared room_id={} discord_channel={} reply_to={:?} edit_of={:?} attachments={} content_len={} content_preview={}",
+            mapping.matrix_room_id,
+            mapping.discord_channel_id,
+            outbound.reply_to,
+            outbound.edit_of,
+            outbound.attachments.len(),
+            outbound.content.len(),
+            preview_text(&outbound.content)
+        );
         self.send_to_discord_message(&mapping.discord_channel_id, outbound)
             .await?;
         Ok(())
@@ -257,6 +304,15 @@ impl BridgeCore {
         outbound: OutboundDiscordMessage,
     ) -> Result<()> {
         let content = outbound.render_content();
+        debug!(
+            "sending discord message channel_id={} reply_to={:?} edit_of={:?} attachments={} content_len={} content_preview={}",
+            discord_channel_id,
+            outbound.reply_to,
+            outbound.edit_of,
+            outbound.attachments.len(),
+            content.len(),
+            preview_text(&content)
+        );
         self.discord_client
             .send_message_with_metadata(
                 discord_channel_id,
@@ -266,6 +322,11 @@ impl BridgeCore {
                 outbound.edit_of.as_deref(),
             )
             .await?;
+        debug!(
+            "discord message sent channel_id={} content_len={}",
+            discord_channel_id,
+            content.len()
+        );
         Ok(())
     }
 
@@ -276,6 +337,16 @@ impl BridgeCore {
         outbound: OutboundMatrixMessage,
     ) -> Result<()> {
         let body = outbound.render_body();
+        debug!(
+            "sending matrix message room_id={} sender={} reply_to={:?} edit_of={:?} attachments={} body_len={} body_preview={}",
+            matrix_room_id,
+            discord_sender,
+            outbound.reply_to,
+            outbound.edit_of,
+            outbound.attachments.len(),
+            body.len(),
+            preview_text(&body)
+        );
         self.matrix_client
             .send_message_with_metadata(
                 matrix_room_id,
@@ -286,6 +357,12 @@ impl BridgeCore {
                 outbound.edit_of.as_deref(),
             )
             .await?;
+        debug!(
+            "matrix message sent room_id={} sender={} body_len={}",
+            matrix_room_id,
+            discord_sender,
+            body.len()
+        );
         Ok(())
     }
 
@@ -293,13 +370,36 @@ impl BridgeCore {
         &self,
         ctx: DiscordMessageContext,
     ) -> Result<()> {
+        debug!(
+            "discord inbound message channel_id={} sender={} reply_to={:?} edit_of={:?} attachments={} content_len={} content_preview={}",
+            ctx.channel_id,
+            ctx.sender_id,
+            ctx.reply_to,
+            ctx.edit_of,
+            ctx.attachments.len(),
+            ctx.content.len(),
+            preview_text(&ctx.content)
+        );
+
         let room_mapping = self
             .db_manager
             .room_store()
             .get_room_by_discord_channel(&ctx.channel_id)
             .await?;
 
+        debug!(
+            "discord inbound mapping lookup channel_id={} mapped={}",
+            ctx.channel_id,
+            room_mapping.is_some()
+        );
+
         if self.discord_command_handler.is_command(&ctx.content) {
+            debug!(
+                "discord inbound command detected channel_id={} sender={} command_preview={}",
+                ctx.channel_id,
+                ctx.sender_id,
+                preview_text(&ctx.content)
+            );
             let outcome = self.discord_command_handler.handle(
                 &ctx.content,
                 room_mapping.is_some(),
@@ -311,6 +411,10 @@ impl BridgeCore {
         }
 
         let Some(mapping) = room_mapping else {
+            debug!(
+                "discord inbound dropped channel_id={} reason=no_matrix_mapping",
+                ctx.channel_id
+            );
             return Ok(());
         };
         let outbound = self.message_flow.discord_to_matrix(&DiscordInboundMessage {
@@ -321,6 +425,17 @@ impl BridgeCore {
             reply_to: ctx.reply_to,
             edit_of: ctx.edit_of,
         });
+        debug!(
+            "discord->matrix outbound prepared channel_id={} matrix_room={} sender={} reply_to={:?} edit_of={:?} attachments={} body_len={} body_preview={}",
+            mapping.discord_channel_id,
+            mapping.matrix_room_id,
+            ctx.sender_id,
+            outbound.reply_to,
+            outbound.edit_of,
+            outbound.attachments.len(),
+            outbound.body.len(),
+            preview_text(&outbound.body)
+        );
         self.send_to_matrix_message(&mapping.matrix_room_id, &ctx.sender_id, outbound)
             .await?;
         Ok(())
@@ -461,5 +576,16 @@ fn action_keyword(action: &ModerationAction) -> &'static str {
         ModerationAction::Kick => "kick",
         ModerationAction::Ban => "ban",
         ModerationAction::Unban => "unban",
+    }
+}
+
+fn preview_text(value: &str) -> String {
+    const MAX_PREVIEW_CHARS: usize = 120;
+    let mut chars = value.chars();
+    let preview: String = chars.by_ref().take(MAX_PREVIEW_CHARS).collect();
+    if chars.next().is_some() {
+        format!("{preview}…")
+    } else {
+        preview
     }
 }
