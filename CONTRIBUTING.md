@@ -1,5 +1,9 @@
 # Contributing
 
+## Licensing
+
+By contributing to this repository, you agree that your contributions are licensed under Apache License 2.0.
+
 ## Pull Requests
 
 1. Keep changes scoped and explain behavior changes clearly in the PR description.
