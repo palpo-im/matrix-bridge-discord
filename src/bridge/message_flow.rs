@@ -261,7 +261,7 @@ mod tests {
                 file: None,
             },
             database: DatabaseConfig {
-                connection_string: "postgres://localhost/bridge".to_string(),
+                url: "postgres://localhost/bridge".to_string(),
                 max_connections: Some(1),
                 min_connections: Some(1),
             },
