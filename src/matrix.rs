@@ -47,7 +47,7 @@ pub struct MatrixUser {
 impl MatrixAppservice {
     pub async fn new(config: Arc<Config>) -> Result<Self> {
         info!(
-            "Initializing Matrix appservice for {}",
+            "initializing matrix appservice for {}",
             config.bridge.domain
         );
         Ok(Self { config })
@@ -55,7 +55,7 @@ impl MatrixAppservice {
 
     pub async fn start(&self) -> Result<()> {
         info!(
-            "Matrix appservice listener configured at {}:{}",
+            "matrix appservice listener configured at {}:{}",
             self.config.bridge.bind_address, self.config.bridge.port
         );
         Ok(())
@@ -87,14 +87,14 @@ impl MatrixAppservice {
 
     pub async fn send_message(&self, room_id: &str, sender: &str, content: &str) -> Result<()> {
         debug!(
-            "Matrix send_message room={} sender={} content={}",
+            "matrix send_message room={} sender={} content={}",
             room_id, sender, content
         );
         Ok(())
     }
 
     pub async fn send_notice(&self, room_id: &str, content: &str) -> Result<()> {
-        debug!("Matrix send_notice room={} body={}", room_id, content);
+        debug!("matrix send_notice room={} body={}", room_id, content);
         Ok(())
     }
 
@@ -108,7 +108,7 @@ impl MatrixAppservice {
         edit_of: Option<&str>,
     ) -> Result<()> {
         debug!(
-            "Matrix send_message room={} sender={} reply_to={:?} edit_of={:?} attachments={} body={}",
+            "matrix send_message room={} sender={} reply_to={:?} edit_of={:?} attachments={} body={}",
             room_id,
             sender,
             reply_to,
@@ -152,14 +152,14 @@ impl MatrixAppservice {
         status_message: &str,
     ) -> Result<()> {
         debug!(
-            "Matrix set_presence discord_user={} presence={} status={}",
+            "matrix set_presence discord_user={} presence={} status={}",
             discord_user_id, presence, status_message
         );
         Ok(())
     }
 
     pub async fn set_room_alias(&self, room_id: &str, alias: &str) -> Result<()> {
-        debug!("Matrix set_room_alias room={} alias={}", room_id, alias);
+        debug!("matrix set_room_alias room={} alias={}", room_id, alias);
         Ok(())
     }
 

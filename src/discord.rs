@@ -45,17 +45,17 @@ pub struct DiscordClient {
 
 impl DiscordClient {
     pub async fn new(config: Arc<Config>) -> Result<Self> {
-        info!("Initializing Discord client");
+        info!("initializing discord client");
         Ok(Self { _config: config })
     }
 
     pub async fn start(&self) -> Result<()> {
-        info!("Discord client is ready");
+        info!("discord client is ready");
         Ok(())
     }
 
     pub async fn send_message(&self, channel_id: &str, content: &str) -> Result<String> {
-        info!("Forwarding message to Discord channel {}", channel_id);
+        info!("forwarding message to discord channel {}", channel_id);
         Ok(format!("mock:{}:{}", channel_id, content.len()))
     }
 

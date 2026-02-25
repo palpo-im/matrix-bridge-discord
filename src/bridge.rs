@@ -68,7 +68,7 @@ impl BridgeCore {
         self.matrix_client.start().await?;
         self.discord_client.start().await?;
 
-        info!("Bridge core started");
+        info!("bridge core started");
 
         let mut ticker = tokio::time::interval(Duration::from_secs(5));
         loop {
@@ -76,7 +76,7 @@ impl BridgeCore {
             self.presence_handler
                 .process_next(self.matrix_client.as_ref())
                 .await?;
-            debug!("Bridge heartbeat");
+            debug!("bridge heartbeat");
         }
     }
 

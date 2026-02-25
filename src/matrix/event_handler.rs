@@ -38,7 +38,7 @@ impl MatrixEventHandler for MatrixEventHandlerImpl {
         if let Some(bridge) = &self.bridge {
             bridge.handle_matrix_message(event).await?;
         } else {
-            debug!("Matrix message received without bridge binding");
+            debug!("matrix message received without bridge binding");
         }
         Ok(())
     }
@@ -66,7 +66,7 @@ impl MatrixEventProcessor {
             "m.room.message" => self.event_handler.handle_room_message(&event).await?,
             "m.room.member" => self.event_handler.handle_room_member(&event).await?,
             "m.presence" => self.event_handler.handle_presence(&event).await?,
-            other => warn!("Unhandled Matrix event type: {}", other),
+            other => warn!("unhandled matrix event type: {}", other),
         }
         Ok(())
     }

@@ -26,7 +26,7 @@ async fn main() -> Result<()> {
     utils::logging::init_tracing();
 
     let config = Arc::new(Config::load()?);
-    info!("Matrix-Discord Bridge starting up");
+    info!("matrix-discord bridge starting up");
 
     let db_manager = Arc::new(db::DatabaseManager::new(&config.database).await?);
     db_manager.migrate().await?;
@@ -50,13 +50,13 @@ async fn main() -> Result<()> {
 
     let web_handle = tokio::spawn(async move {
         if let Err(e) = web_server.start().await {
-            error!("Web server error: {}", e);
+            error!("web server error: {}", e);
         }
     });
 
     let bridge_handle = tokio::spawn(async move {
         if let Err(e) = bridge.start().await {
-            error!("Bridge error: {}", e);
+            error!("bridge error: {}", e);
         }
     });
 
@@ -65,6 +65,6 @@ async fn main() -> Result<()> {
         _ = bridge_handle => {},
     }
 
-    info!("Matrix-Discord Bridge shutting down");
+    info!("matrix-discord bridge shutting down");
     Ok(())
 }

@@ -4,6 +4,7 @@ use std::time::Instant;
 use anyhow::Result;
 use once_cell::sync::OnceCell;
 use salvo::prelude::*;
+use salvo::prelude::*;
 use tracing::info;
 
 use crate::bridge::BridgeCore;
@@ -11,10 +12,11 @@ use crate::config::Config;
 use crate::db::DatabaseManager;
 use crate::matrix::MatrixAppservice;
 
-pub mod handlers;
-pub mod middleware;
+mod health;
+mod provisioning;
 
-use self::middleware::auth::create_router;
+use health::{get_status, health_check};
+use provisioning::{create_bridge, delete_bridge, get_bridge_info, list_rooms};
 
 #[derive(Clone)]
 pub struct WebState {
@@ -59,11 +61,40 @@ impl WebServer {
             "{}:{}",
             self.config.bridge.bind_address, self.config.bridge.port
         );
-        info!("Starting web server on {}", bind_addr);
+        info!("starting web server on {}", bind_addr);
 
         let acceptor = TcpListener::new(bind_addr).bind().await;
-        Server::new(acceptor).serve(create_router()).await;
+        Server::new(acceptor).serve(root_router()).await;
 
         Ok(())
     }
+}
+
+pub fn root_router() -> Router {
+    Router::new()
+        .push(Router::with_path("health").get(health_check))
+        .push(Router::with_path("status").get(get_status))
+        .push(
+            Router::with_path("_matrix/app/v1")
+                .push(Router::with_path("rooms").get(list_rooms))
+                .push(Router::with_path("bridges").post(create_bridge))
+                .push(
+                    Router::with_path("bridges/{id}")
+                        .get(get_bridge_info)
+                        .delete(delete_bridge),
+                ),
+        )
+        .push(
+            Router::with_path("admin")
+                .push(
+                    Router::with_path("bridges")
+                        .get(list_rooms)
+                        .post(create_bridge),
+                )
+                .push(
+                    Router::with_path("bridges/{id}")
+                        .get(get_bridge_info)
+                        .delete(delete_bridge),
+                ),
+        )
 }

@@ -16,17 +16,29 @@ path = "src/main.rs"
 [features]
 default = ["postgres", "sqlite", "discord"]
 postgres = []
-sqlite = ["libsqlite3-sys"]
+sqlite = []
 discord = ["serenity"]
 
 [dependencies]
 salvo = { version = "0.89", features = ["full", "oapi", "quinn"] }
 tokio = { version = "1.40", features = ["full"] }
 hyper = { version = "1.4", features = ["full"] }
-serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "rustls_backend", "model", "utils", "cache"], optional = true }
+serenity = { version = "0.12", default-features = false, features = [
+    "client",
+    "gateway",
+    "rustls_backend",
+    "model",
+    "utils",
+    "cache",
+], optional = true }
 songbird = { version = "0.4", optional = true }
-diesel = { version = "2.2", default-features = false, features = ["postgres", "sqlite", "r2d2", "chrono"] }
-libsqlite3-sys = { version = "0.35", features = ["bundled"], optional = true }
+diesel = { version = "2.3.6", default-features = false, features = [
+    "postgres",
+    "sqlite",
+    "r2d2",
+    "chrono",
+] }
+libsqlite3-sys = { version = "0.35.0", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
 serde_json = "1.0"
@@ -38,7 +50,7 @@ anyhow = "1.0"
 thiserror = "1.0"
 futures = "0.3"
 async-trait = "0.1"
-reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+reqwest = { version = "0.13", features = ["json"] }
 chrono = { version = "0.4", features = ["serde"] }
 time = "0.3"
 uuid = { version = "1.11", features = ["v4", "serde"] }
