@@ -198,13 +198,11 @@ fn parse_relation(content: &Value) -> Option<MessageRelation> {
         .get("rel_type")
         .and_then(Value::as_str)
         .is_some_and(|kind| kind == "m.replace")
-    {
-        if let Some(edit_event_id) = relates_to.get("event_id").and_then(Value::as_str) {
+        && let Some(edit_event_id) = relates_to.get("event_id").and_then(Value::as_str) {
             return Some(MessageRelation::Replace {
                 event_id: edit_event_id.to_string(),
             });
         }
-    }
     None
 }
 

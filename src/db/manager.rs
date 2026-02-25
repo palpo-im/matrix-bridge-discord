@@ -71,14 +71,14 @@ impl DatabaseManager {
                 let room_store = Arc::new(PostgresRoomStore::new(pool.clone()));
                 let user_store = Arc::new(PostgresUserStore::new(pool.clone()));
 
-                return Ok(Self {
+                Ok(Self {
                     postgres_pool: Some(pool),
                     #[cfg(feature = "sqlite")]
                     sqlite_path: None,
                     room_store,
                     user_store,
                     db_type,
-                });
+                })
             }
             #[cfg(feature = "sqlite")]
             DbType::Sqlite => {
@@ -87,14 +87,14 @@ impl DatabaseManager {
                 let room_store = Arc::new(SqliteRoomStore::new());
                 let user_store = Arc::new(SqliteUserStore::new());
 
-                return Ok(Self {
+                Ok(Self {
                     #[cfg(feature = "postgres")]
                     postgres_pool: None,
                     sqlite_path: Some(path),
                     room_store,
                     user_store,
                     db_type,
-                });
+                })
             }
             #[cfg(not(feature = "postgres"))]
             DbType::Postgres => {

@@ -189,7 +189,7 @@ impl Config {
         }
 
         // 验证端口范围
-        if self.bridge.port == 0 || self.bridge.port > 65535 {
+        if self.bridge.port == 0 {
             return Err(ConfigError::InvalidConfig(
                 "bridge.port must be between 1 and 65535".to_string(),
             ));

@@ -6,7 +6,7 @@ use matrix_bot_sdk::{
     client::{MatrixAuth, MatrixClient},
     models::CreateRoom,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 use url::Url;
@@ -161,10 +161,12 @@ impl MatrixAppservice {
     ) -> Result<String> {
         let alias_localpart = format!("_discord_{}", discord_channel_id);
 
-        let mut opt = CreateRoom::default();
-        opt.room_alias_name = Some(alias_localpart);
-        opt.name = Some(name.to_owned());
-        opt.topic = topic.map(ToOwned::to_owned);
+        let opt = CreateRoom {
+            room_alias_name: Some(alias_localpart),
+            name: Some(name.to_owned()),
+            topic: topic.map(ToOwned::to_owned),
+            ..Default::default()
+        };
 
         let room_id = self.appservice.client.create_room(&opt).await?;
         Ok(room_id)
