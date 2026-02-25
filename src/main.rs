@@ -34,11 +34,17 @@ async fn main() -> Result<()> {
     let matrix_client = Arc::new(matrix::MatrixAppservice::new(config.clone()).await?);
     let discord_client = Arc::new(discord::DiscordClient::new(config.clone()).await?);
 
+    let mut event_handler = matrix::MatrixEventHandlerImpl::new(matrix_client.clone());
+
     let bridge = Arc::new(bridge::BridgeCore::new(
         matrix_client.clone(),
         discord_client.clone(),
         db_manager.clone(),
     ));
+
+    event_handler.set_bridge(bridge.clone());
+    let processor = Arc::new(matrix::MatrixEventProcessor::new(Arc::new(event_handler)));
+    matrix_client.set_processor(processor).await;
 
     let web_server = WebServer::new(
         config.clone(),

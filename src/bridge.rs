@@ -166,9 +166,7 @@ impl BridgeCore {
                 .unwrap_or(false);
             debug!(
                 "matrix command permission result room_id={} sender={} granted={}",
-                event.room_id,
-                event.sender,
-                has_permissions
+                event.room_id, event.sender, has_permissions
             );
             let outcome = self
                 .matrix_command_handler
@@ -187,8 +185,7 @@ impl BridgeCore {
         let Some(message) = MessageFlow::parse_matrix_event(event) else {
             debug!(
                 "matrix inbound dropped room_id={} event_id={:?} reason=unsupported_or_unparseable",
-                event.room_id,
-                event.event_id
+                event.room_id, event.event_id
             );
             return Ok(());
         };
@@ -242,7 +239,7 @@ impl BridgeCore {
         Ok(())
     }
 
-    async fn bridge_matrix_room(
+    pub async fn bridge_matrix_room(
         &self,
         matrix_room_id: &str,
         guild_id: &str,
@@ -281,7 +278,7 @@ impl BridgeCore {
         Ok("I have bridged this room to your channel".to_string())
     }
 
-    async fn unbridge_matrix_room(&self, matrix_room_id: &str) -> Result<String> {
+    pub async fn unbridge_matrix_room(&self, matrix_room_id: &str) -> Result<String> {
         let room_mapping = self
             .db_manager
             .room_store()

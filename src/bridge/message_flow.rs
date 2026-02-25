@@ -245,10 +245,13 @@ mod tests {
     fn test_config() -> Arc<Config> {
         Arc::new(Config {
             bridge: BridgeConfig {
+                bridge_id: "test-bridge".to_string(),
+                appservice_token: "test_as_token".to_string(),
+                homeserver_token: "test_hs_token".to_string(),
                 domain: "example.org".to_string(),
                 port: 9005,
                 bind_address: "127.0.0.1".to_string(),
-                homeserver_url: None,
+                homeserver_url: "http://localhost:8008".to_string(),
             },
             auth: AuthConfig {
                 bot_token: "token".to_string(),

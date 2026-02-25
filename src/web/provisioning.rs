@@ -70,72 +70,25 @@ pub async fn create_bridge(req: &mut Request, res: &mut Response) {
         .query::<String>("discord_guild_id")
         .unwrap_or_else(|| "unknown_guild".to_string());
 
-    let room_store = web_state().db_manager.room_store();
+    let bridge = web_state().bridge.clone();
 
-    match room_store.get_room_by_matrix_room(&matrix_room_id).await {
-        Ok(Some(_)) => {
-            render_error(res, StatusCode::CONFLICT, "matrix room is already bridged");
-            return;
-        }
-        Ok(None) => {}
-        Err(err) => {
-            render_error(
-                res,
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("database error: {}", err),
-            );
-            return;
-        }
-    }
-
-    match room_store
-        .get_room_by_discord_channel(&discord_channel_id)
+    match bridge
+        .bridge_matrix_room(&matrix_room_id, &discord_guild_id, &discord_channel_id)
         .await
     {
-        Ok(Some(_)) => {
-            render_error(
-                res,
-                StatusCode::CONFLICT,
-                "discord channel is already bridged",
-            );
-            return;
-        }
-        Ok(None) => {}
-        Err(err) => {
-            render_error(
-                res,
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("database error: {}", err),
-            );
-            return;
-        }
-    }
-
-    let now = Utc::now();
-    let mapping = RoomMapping {
-        id: 0,
-        matrix_room_id,
-        discord_channel_id,
-        discord_channel_name,
-        discord_guild_id,
-        created_at: now,
-        updated_at: Utc::now(),
-    };
-
-    match room_store.create_room_mapping(&mapping).await {
-        Ok(()) => {
-            res.status_code(StatusCode::CREATED);
-            res.render(Json(json!({
-                "ok": true,
-                "mapping": mapping,
-            })));
+        Ok(reply) => {
+            if reply.contains("problem") || reply.contains("already") {
+                render_error(res, StatusCode::BAD_REQUEST, &reply);
+            } else {
+                res.status_code(StatusCode::CREATED);
+                res.render(Json(json!({
+                    "ok": true,
+                    "message": reply,
+                })));
+            }
         }
         Err(err) => {
-            render_error(
-                res,
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("database error: {}", err),
-            );
+            render_error(res, StatusCode::INTERNAL_SERVER_ERROR, &err.to_string());
         }
     }
 }
@@ -150,21 +103,30 @@ pub async fn delete_bridge(req: &mut Request, res: &mut Response) {
         }
     };
 
-    match web_state()
-        .db_manager
-        .room_store()
-        .delete_room_mapping(id)
-        .await
-    {
-        Ok(()) => {
-            res.render(Json(json!({ "ok": true, "id": id })));
+    // Find mapping by ID first to get matrix_room_id
+    let room_store = web_state().db_manager.room_store();
+    let mapping = match room_store.get_room_by_id(id).await {
+        Ok(Some(m)) => m,
+        Ok(None) => {
+            render_error(res, StatusCode::NOT_FOUND, "bridge not found");
+            return;
         }
         Err(err) => {
-            render_error(
-                res,
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("database error: {}", err),
-            );
+            render_error(res, StatusCode::INTERNAL_SERVER_ERROR, &err.to_string());
+            return;
+        }
+    };
+
+    match web_state()
+        .bridge
+        .unbridge_matrix_room(&mapping.matrix_room_id)
+        .await
+    {
+        Ok(reply) => {
+            res.render(Json(json!({ "ok": true, "message": reply })));
+        }
+        Err(err) => {
+            render_error(res, StatusCode::INTERNAL_SERVER_ERROR, &err.to_string());
         }
     }
 }

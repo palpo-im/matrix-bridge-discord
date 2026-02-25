@@ -37,6 +37,7 @@ pub fn web_state() -> &'static WebState {
 #[derive(Clone)]
 pub struct WebServer {
     config: Arc<Config>,
+    matrix_client: Arc<MatrixAppservice>,
 }
 
 impl WebServer {
@@ -48,12 +49,15 @@ impl WebServer {
     ) -> Result<Self> {
         let _ = WEB_STATE.set(WebState {
             db_manager,
-            matrix_client,
+            matrix_client: matrix_client.clone(),
             bridge,
             started_at: Instant::now(),
         });
 
-        Ok(Self { config })
+        Ok(Self {
+            config,
+            matrix_client,
+        })
     }
 
     pub async fn start(&self) -> Result<()> {
@@ -64,7 +68,9 @@ impl WebServer {
         info!("starting web server on {}", bind_addr);
 
         let acceptor = TcpListener::new(bind_addr).bind().await;
-        Server::new(acceptor).serve(root_router()).await;
+        let appservice_router = self.matrix_client.appservice.router();
+        let main_router = root_router().push(appservice_router);
+        Server::new(acceptor).serve(main_router).await;
 
         Ok(())
     }

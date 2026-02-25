@@ -22,8 +22,11 @@ pub struct BridgeConfig {
     pub port: u16,
     #[serde(default = "default_bind_address")]
     pub bind_address: String,
+    pub bridge_id: String,
+    pub appservice_token: String,
+    pub homeserver_token: String,
     #[serde(default)]
-    pub homeserver_url: Option<String>,
+    pub homeserver_url: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -59,9 +62,7 @@ impl DatabaseConfig {
     pub fn db_type(&self) -> DbType {
         if self.url.starts_with("sqlite://") {
             DbType::Sqlite
-        } else if self.url.starts_with("postgres://")
-            || self.url.starts_with("postgresql://")
-        {
+        } else if self.url.starts_with("postgres://") || self.url.starts_with("postgresql://") {
             DbType::Postgres
         } else {
             // Default to PostgreSQL for backward compatibility
@@ -77,7 +78,12 @@ impl DatabaseConfig {
     /// Get the SQLite file path (without the sqlite:// prefix)
     pub fn sqlite_path(&self) -> Option<String> {
         if let DbType::Sqlite = self.db_type() {
-            Some(self.url.strip_prefix("sqlite://").unwrap_or(&self.url).to_string())
+            Some(
+                self.url
+                    .strip_prefix("sqlite://")
+                    .unwrap_or(&self.url)
+                    .to_string(),
+            )
         } else {
             None
         }
