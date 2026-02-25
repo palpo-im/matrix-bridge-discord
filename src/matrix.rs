@@ -176,14 +176,7 @@ impl MatrixAppservice {
     }
 
     pub async fn send_notice(&self, room_id: &str, content: &str) -> Result<()> {
-        let content_json = json!({
-            "msgtype": "m.notice",
-            "body": content
-        });
-        self.appservice
-            .client
-            .send_state_event(room_id, "m.room.message", "", &content_json)
-            .await?;
+        self.appservice.client.send_notice(room_id, content).await?;
         Ok(())
     }
 
@@ -214,23 +207,8 @@ impl MatrixAppservice {
             });
         }
 
-        // Send state event is for state, we should send a normal message event...
-        // Wait, matrix_bot_sdk doesn't have send_room_message directly yet?
-        // Let's use `raw_json` for /send/m.room.message
-        let txn_id = uuid::Uuid::new_v4().to_string();
         ghost_client
-            .raw_json(
-                reqwest::Method::PUT,
-                &format!(
-                    "/_matrix/client/v3/rooms/{}/send/m.room.message/{}",
-                    percent_encoding::utf8_percent_encode(
-                        room_id,
-                        percent_encoding::NON_ALPHANUMERIC
-                    ),
-                    txn_id
-                ),
-                Some(content),
-            )
+            .send_event(room_id, "m.room.message", &content)
             .await?;
 
         Ok(())
@@ -238,13 +216,36 @@ impl MatrixAppservice {
 
     pub async fn check_permission(
         &self,
-        _user_id: &str,
-        _room_id: &str,
-        _required_level: i64,
+        user_id: &str,
+        room_id: &str,
+        required_level: i64,
         _category: &str,
         _subcategory: &str,
     ) -> Result<bool> {
-        Ok(true) // TODO: Check power levels from Matrix state
+        let power_levels = self
+            .appservice
+            .client
+            .get_room_state_event(room_id, "m.room.power_levels", "")
+            .await;
+
+        match power_levels {
+            Ok(pl) => {
+                let user_level = pl
+                    .get("users")
+                    .and_then(|u| u.get(user_id))
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or_else(|| {
+                        pl.get("users_default")
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or(0)
+                    });
+                Ok(user_level >= required_level)
+            }
+            Err(_) => {
+                // If we can't fetch power levels, default to denying
+                Ok(false)
+            }
+        }
     }
 
     pub async fn ensure_ghost_user_registered(
@@ -284,21 +285,10 @@ impl MatrixAppservice {
         Ok(())
     }
 
-    pub async fn set_room_alias(&self, _room_id: &str, alias: &str) -> Result<()> {
-        let content = json!({ "alias": alias });
+    pub async fn set_room_alias(&self, room_id: &str, alias: &str) -> Result<()> {
         self.appservice
             .client
-            .raw_json(
-                reqwest::Method::PUT,
-                &format!(
-                    "/_matrix/client/v3/directory/room/{}",
-                    percent_encoding::utf8_percent_encode(
-                        alias,
-                        percent_encoding::NON_ALPHANUMERIC
-                    )
-                ),
-                Some(content),
-            )
+            .create_room_alias(alias, room_id)
             .await?;
         Ok(())
     }

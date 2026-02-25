@@ -2508,7 +2508,6 @@ dependencies = [
  "metrics-exporter-prometheus",
  "once_cell",
  "parking_lot",
- "percent-encoding",
  "reqwest 0.13.2",
  "salvo",
  "serde",
