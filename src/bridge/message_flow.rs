@@ -236,7 +236,8 @@ mod tests {
     use super::{DiscordInboundMessage, MessageFlow, MessageRelation};
     use crate::config::{
         AuthConfig, BridgeConfig, ChannelConfig, ChannelDeleteOptionsConfig, Config,
-        DatabaseConfig, GhostsConfig, LimitsConfig, LoggingConfig, MetricsConfig, RoomConfig,
+        DatabaseConfig, GhostsConfig, LimitsConfig, LoggingConfig, MetricsConfig, RegistrationConfig,
+        RoomConfig,
     };
     use crate::discord::DiscordClient;
     use crate::matrix::{MatrixAppservice, MatrixEvent};
@@ -244,9 +245,6 @@ mod tests {
     fn test_config() -> Arc<Config> {
         Arc::new(Config {
             bridge: BridgeConfig {
-                bridge_id: "test-bridge".to_string(),
-                appservice_token: "test_as_token".to_string(),
-                homeserver_token: "test_hs_token".to_string(),
                 domain: "example.org".to_string(),
                 port: 9005,
                 bind_address: "127.0.0.1".to_string(),
@@ -269,6 +267,12 @@ mod tests {
                 admin_mxid: None,
                 invalid_token_message: "Your Discord bot token seems to be invalid".to_string(),
                 user_activity: None,
+            },
+            registration: RegistrationConfig {
+                bridge_id: "test-bridge".to_string(),
+                appservice_token: "test_as_token".to_string(),
+                homeserver_token: "test_hs_token".to_string(),
+                ..Default::default()
             },
             auth: AuthConfig {
                 bot_token: "token".to_string(),
