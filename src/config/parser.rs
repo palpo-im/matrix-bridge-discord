@@ -68,11 +68,11 @@ pub struct BridgeConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RegistrationConfig {
-    #[serde(default, alias = "id", alias = "bridge_id")]
+    #[serde(alias = "id")]
     pub bridge_id: String,
-    #[serde(default, alias = "as_token", alias = "appservice_token")]
+    #[serde(default, alias = "as_token")]
     pub appservice_token: String,
-    #[serde(default, alias = "hs_token", alias = "homeserver_token")]
+    #[serde(default, alias = "hs_token")]
     pub homeserver_token: String,
     #[serde(default = "default_sender_localpart")]
     pub sender_localpart: String,

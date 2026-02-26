@@ -95,7 +95,7 @@ impl MatrixAppservice {
         );
 
         let homeserver_url = Url::parse(&config.bridge.homeserver_url)?;
-        let auth = MatrixAuth::new(&config.bridge.appservice_token);
+        let auth = MatrixAuth::new(&config.registration.appservice_token);
         let client = MatrixClient::new(homeserver_url, auth);
 
         let handler = Arc::new(RwLock::new(BridgeAppserviceHandler { processor: None }));
@@ -110,11 +110,11 @@ impl MatrixAppservice {
         }
 
         let appservice = Appservice::new(
-            &config.bridge.homeserver_token,
-            &config.bridge.appservice_token,
+            &config.registration.homeserver_token,
+            &config.registration.appservice_token,
             client,
         )
-        .with_appservice_id(&config.bridge.bridge_id)
+        .with_appservice_id(&config.registration.bridge_id)
         .with_handler(Arc::new(HandlerWrapper(handler.clone())));
 
         Ok(Self {
@@ -316,10 +316,10 @@ impl MatrixAppservice {
 
     pub fn registration_preview(&self) -> Value {
         json!({
-            "id": self.config.bridge.bridge_id,
+            "id": self.config.registration.bridge_id,
             "url": format!("http://{}:{}", self.config.bridge.bind_address, self.config.bridge.port),
-            "as_token": self.config.bridge.appservice_token,
-            "hs_token": self.config.bridge.homeserver_token,
+            "as_token": self.config.registration.appservice_token,
+            "hs_token": self.config.registration.homeserver_token,
             "sender_localpart": "_discord_",
             "rate_limited": false,
             "namespaces": {
