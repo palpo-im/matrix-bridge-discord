@@ -3,6 +3,7 @@ FROM debian:bookworm AS builder
 # Install Rust and build dependencies
 RUN apt-get update && apt-get install -y \
     curl \
+    gcc \
     pkg-config \
     libssl-dev \
     libpq-dev \
