@@ -266,6 +266,7 @@ impl BridgeCore {
                     match self
                         .matrix_client
                         .appservice
+                        .client
                         .join_room(&event.room_id)
                         .await
                     {
