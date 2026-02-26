@@ -22,77 +22,69 @@ pub struct BridgeConfig {
     pub domain: String,
     #[serde(default = "default_port")]
     pub port: u16,
-    #[serde(alias = "bindAddress", default = "default_bind_address")]
+    #[serde(default = "default_bind_address")]
     pub bind_address: String,
-    #[serde(alias = "id")]
     pub bridge_id: String,
     #[serde(alias = "as_token")]
     pub appservice_token: String,
     #[serde(alias = "hs_token")]
     pub homeserver_token: String,
-    #[serde(alias = "homeserverUrl", default)]
+    #[serde(default)]
     pub homeserver_url: String,
-    #[serde(alias = "presenceInterval", default = "default_presence_interval")]
+    #[serde(default = "default_presence_interval")]
     pub presence_interval: u64,
-    #[serde(alias = "disablePresence", default)]
+    #[serde(default)]
     pub disable_presence: bool,
-    #[serde(alias = "disableTypingNotifications", default)]
+    #[serde(default)]
     pub disable_typing_notifications: bool,
-    #[serde(alias = "disableDiscordMentions", default)]
+    #[serde(default)]
     pub disable_discord_mentions: bool,
-    #[serde(alias = "disableDeletionForwarding", default)]
+    #[serde(default)]
     pub disable_deletion_forwarding: bool,
-    #[serde(alias = "enableSelfServiceBridging", default)]
+    #[serde(default)]
     pub enable_self_service_bridging: bool,
-    #[serde(alias = "disablePortalBridging", default)]
+    #[serde(default)]
     pub disable_portal_bridging: bool,
-    #[serde(alias = "disableReadReceipts", default)]
+    #[serde(default)]
     pub disable_read_receipts: bool,
-    #[serde(alias = "disableEveryoneMention", default)]
+    #[serde(default)]
     pub disable_everyone_mention: bool,
-    #[serde(alias = "disableHereMention", default)]
+    #[serde(default)]
     pub disable_here_mention: bool,
-    #[serde(alias = "disableJoinLeaveNotifications", default)]
+    #[serde(default)]
     pub disable_join_leave_notifications: bool,
-    #[serde(alias = "disableInviteNotifications", default)]
+    #[serde(default)]
     pub disable_invite_notifications: bool,
-    #[serde(alias = "disableRoomTopicNotifications", default)]
+    #[serde(default)]
     pub disable_room_topic_notifications: bool,
-    #[serde(alias = "determineCodeLanguage", default)]
+    #[serde(default)]
     pub determine_code_language: bool,
-    #[serde(alias = "userLimit", default)]
+    #[serde(default)]
     pub user_limit: Option<u32>,
-    #[serde(alias = "adminMxid", default)]
+    #[serde(default)]
     pub admin_mxid: Option<String>,
-    #[serde(
-        alias = "invalidTokenMessage",
-        default = "default_invalid_token_message"
-    )]
+    #[serde(default = "default_invalid_token_message")]
     pub invalid_token_message: String,
-    #[serde(alias = "userActivity", default)]
+    #[serde(default)]
     pub user_activity: Option<UserActivityConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct UserActivityConfig {
-    #[serde(alias = "minUserActiveDays", default)]
+    #[serde(default)]
     pub min_user_active_days: u64,
-    #[serde(alias = "inactiveAfterDays", default)]
+    #[serde(default)]
     pub inactive_after_days: u64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AuthConfig {
-    #[serde(alias = "botToken")]
     pub bot_token: String,
-    #[serde(alias = "clientID", default)]
+    #[serde(default)]
     pub client_id: Option<String>,
-    #[serde(alias = "clientSecret", default)]
+    #[serde(default)]
     pub client_secret: Option<String>,
-    #[serde(
-        alias = "usePrivilegedIntents",
-        default = "default_use_privileged_intents"
-    )]
+    #[serde(default = "default_use_privileged_intents")]
     pub use_privileged_intents: bool,
 }
 
@@ -100,7 +92,7 @@ pub struct AuthConfig {
 pub struct LoggingConfig {
     #[serde(alias = "console", default = "default_log_level")]
     pub level: String,
-    #[serde(alias = "lineDateFormat", default = "default_line_date_format")]
+    #[serde(default = "default_line_date_format")]
     pub line_date_format: String,
     #[serde(default = "default_log_format")]
     pub format: String,
@@ -115,11 +107,11 @@ pub struct LoggingFileConfig {
     pub file: String,
     #[serde(default = "default_log_file_level")]
     pub level: String,
-    #[serde(alias = "maxFiles", default = "default_log_max_files")]
+    #[serde(default = "default_log_max_files")]
     pub max_files: String,
-    #[serde(alias = "maxSize", default = "default_log_max_size")]
+    #[serde(default = "default_log_max_size")]
     pub max_size: String,
-    #[serde(alias = "datePattern", default = "default_log_date_pattern")]
+    #[serde(default = "default_log_date_pattern")]
     pub date_pattern: String,
     #[serde(default)]
     pub enabled: Vec<String>,
@@ -131,7 +123,7 @@ pub struct LoggingFileConfig {
 pub struct DatabaseConfig {
     #[serde(default)]
     pub url: Option<String>,
-    #[serde(alias = "connString", default)]
+    #[serde(default)]
     pub conn_string: Option<String>,
     #[serde(default)]
     pub filename: Option<String>,
@@ -139,9 +131,9 @@ pub struct DatabaseConfig {
     pub user_store_path: Option<String>,
     #[serde(default)]
     pub room_store_path: Option<String>,
-    #[serde(alias = "maxConnections", default)]
+    #[serde(default)]
     pub max_connections: Option<u32>,
-    #[serde(alias = "minConnections", default)]
+    #[serde(default)]
     pub min_connections: Option<u32>,
 }
 
@@ -201,48 +193,45 @@ pub enum DbType {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RoomConfig {
-    #[serde(alias = "defaultVisibility", default)]
+    #[serde(default)]
     pub default_visibility: String,
     #[serde(default)]
     pub room_alias_prefix: String,
     #[serde(default)]
     pub enable_room_creation: bool,
-    #[serde(alias = "kickFor", default = "default_kick_for")]
+    #[serde(default = "default_kick_for")]
     pub kick_for: u64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ChannelConfig {
-    #[serde(alias = "namePattern", default = "default_channel_name_pattern")]
+    #[serde(default = "default_channel_name_pattern")]
     pub name_pattern: String,
-    #[serde(alias = "enableChannelCreation", default)]
+    #[serde(default)]
     pub enable_channel_creation: bool,
-    #[serde(alias = "channelNameFormat", default)]
+    #[serde(default)]
     pub channel_name_format: String,
-    #[serde(alias = "topicFormat", default)]
+    #[serde(default)]
     pub topic_format: String,
-    #[serde(alias = "deleteOptions", default)]
+    #[serde(default)]
     pub delete_options: ChannelDeleteOptionsConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ChannelDeleteOptionsConfig {
-    #[serde(alias = "namePrefix", default)]
+    #[serde(default)]
     pub name_prefix: Option<String>,
-    #[serde(alias = "topicPrefix", default)]
+    #[serde(default)]
     pub topic_prefix: Option<String>,
-    #[serde(alias = "disableMessaging", default)]
+    #[serde(default)]
     pub disable_messaging: bool,
-    #[serde(alias = "unsetRoomAlias", default = "default_unset_room_alias")]
+    #[serde(default = "default_unset_room_alias")]
     pub unset_room_alias: bool,
-    #[serde(
-        alias = "unlistFromDirectory",
-        default = "default_unlist_from_directory"
-    )]
+    #[serde(default = "default_unlist_from_directory")]
     pub unlist_from_directory: bool,
-    #[serde(alias = "setInviteOnly", default = "default_set_invite_only")]
+    #[serde(default = "default_set_invite_only")]
     pub set_invite_only: bool,
-    #[serde(alias = "ghostsLeave", default = "default_ghosts_leave")]
+    #[serde(default = "default_ghosts_leave")]
     pub ghosts_leave: bool,
 }
 
@@ -262,14 +251,11 @@ impl Default for ChannelDeleteOptionsConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LimitsConfig {
-    #[serde(
-        alias = "roomGhostJoinDelay",
-        default = "default_room_ghost_join_delay"
-    )]
+    #[serde(default = "default_room_ghost_join_delay")]
     pub room_ghost_join_delay: u64,
-    #[serde(alias = "discordSendDelay", default = "default_discord_send_delay")]
+    #[serde(default = "default_discord_send_delay")]
     pub discord_send_delay: u64,
-    #[serde(alias = "roomCount", default = "default_room_count")]
+    #[serde(default = "default_room_count")]
     pub room_count: i32,
 }
 
@@ -285,25 +271,25 @@ impl Default for LimitsConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct GhostsConfig {
-    #[serde(alias = "nickPattern", default = "default_nick_pattern")]
+    #[serde(default = "default_nick_pattern")]
     pub nick_pattern: String,
-    #[serde(alias = "usernamePattern", default = "default_username_pattern")]
+    #[serde(default = "default_username_pattern")]
     pub username_pattern: String,
-    #[serde(alias = "usernameTemplate", default)]
+    #[serde(default)]
     pub username_template: String,
-    #[serde(alias = "displaynameTemplate", default)]
+    #[serde(default)]
     pub displayname_template: String,
-    #[serde(alias = "avatarUrlTemplate", default)]
+    #[serde(default)]
     pub avatar_url_template: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct MetricsConfig {
-    #[serde(alias = "enable", default)]
+    #[serde(default)]
     pub enabled: bool,
     #[serde(default = "default_metrics_port")]
     pub port: u16,
-    #[serde(alias = "host", default = "default_metrics_bind_address")]
+    #[serde(default = "default_metrics_bind_address")]
     pub bind_address: String,
 }
 
