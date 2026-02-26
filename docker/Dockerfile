@@ -1,24 +1,22 @@
-FROM rust:1.93 as builder
+FROM debian:bookworm AS builder
 
-# Install build dependencies and musl for static linking
+# Install Rust and build dependencies
 RUN apt-get update && apt-get install -y \
+    curl \
     pkg-config \
     libssl-dev \
-    musl-dev \
-    musl-tools \
-    && rustup target add x86_64-unknown-linux-musl \
+    libpq-dev \
+    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
     && rm -rf /var/lib/apt/lists/*
 
+ENV PATH="/root/.cargo/bin:${PATH}"
 WORKDIR /app
 
 # Copy source code
 COPY . .
 
-# Build the application with musl target for static linking
-RUN cargo build --release --target x86_64-unknown-linux-musl
-
-# Runtime stage
-FROM debian:bookworm-slim
+# Build the application
+RUN cargo build --release
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
@@ -30,8 +28,8 @@ RUN apt-get update && apt-get install -y \
 # Create app user
 RUN useradd -m -u 1000 appuser
 
-# Copy the binary from builder stage (using musl target)
-COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/matrix-bridge-discord /usr/local/bin/
+# Copy the binary from builder stage
+COPY --from=builder /app/target/release/matrix-bridge-discord /usr/local/bin/
 
 # Create data directory
 RUN mkdir -p /data && chown appuser:appuser /data
