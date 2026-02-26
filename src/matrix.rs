@@ -119,6 +119,10 @@ impl MatrixAppservice {
         })
     }
 
+    pub fn config(&self) -> Arc<Config> {
+        self.config.clone()
+    }
+
     pub async fn set_processor(&self, processor: Arc<MatrixEventProcessor>) {
         self.handler.write().await.processor = Some(processor);
     }
@@ -161,7 +165,13 @@ impl MatrixAppservice {
     ) -> Result<String> {
         let alias_localpart = format!("_discord_{}", discord_channel_id);
 
+        let visibility = match self.config.room.default_visibility.to_lowercase().as_str() {
+            "public" => Some("public".to_string()),
+            _ => Some("private".to_string()),
+        };
+
         let opt = CreateRoom {
+            visibility,
             room_alias_name: Some(alias_localpart),
             name: Some(name.to_owned()),
             topic: topic.map(ToOwned::to_owned),

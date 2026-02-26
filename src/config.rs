@@ -1,6 +1,7 @@
 pub use self::parser::{
-    AuthConfig, BridgeConfig, ChannelConfig, Config, DatabaseConfig, DbType, GhostConfig, LoggingConfig,
-    MetricsConfig, RoomConfig,
+    AuthConfig, BridgeConfig, ChannelConfig, ChannelDeleteOptionsConfig, Config, DatabaseConfig,
+    DbType, GhostsConfig, LimitsConfig, LoggingConfig, LoggingFileConfig, MetricsConfig,
+    RoomConfig,
 };
 pub use self::validator::ConfigError;
 

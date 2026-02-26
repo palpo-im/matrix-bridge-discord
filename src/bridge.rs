@@ -245,6 +245,22 @@ impl BridgeCore {
         guild_id: &str,
         channel_id: &str,
     ) -> Result<String> {
+        let room_count_limit = self.matrix_client.config().limits.room_count;
+        if room_count_limit >= 0 {
+            let current_count = self
+                .db_manager
+                .room_store()
+                .count_rooms()
+                .await
+                .unwrap_or(0);
+            if current_count >= room_count_limit as i64 {
+                return Ok(format!(
+                    "Cannot bridge this room - the bridge has reached its maximum room limit of {}.",
+                    room_count_limit
+                ));
+            }
+        }
+
         if self
             .db_manager
             .room_store()
@@ -414,6 +430,26 @@ impl BridgeCore {
             );
             return Ok(());
         };
+
+        if let Some(discord_user) = self.discord_client.get_user(&ctx.sender_id).await? {
+            let vars = [
+                ("id", discord_user.id.as_str()),
+                ("tag", discord_user.discriminator.as_str()),
+                ("username", discord_user.username.as_str()),
+            ];
+            let display_name = crate::utils::formatting::apply_pattern_string(
+                &self.matrix_client.config().ghosts.username_pattern,
+                &vars,
+            );
+            self.matrix_client
+                .ensure_ghost_user_registered(&ctx.sender_id, Some(&display_name))
+                .await?;
+        } else {
+            self.matrix_client
+                .ensure_ghost_user_registered(&ctx.sender_id, None)
+                .await?;
+        }
+
         let outbound = self.message_flow.discord_to_matrix(&DiscordInboundMessage {
             channel_id: ctx.channel_id,
             sender_id: ctx.sender_id.clone(),

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
-use super::models::{RoomMapping, UserMapping};
 use super::DatabaseError;
+use super::models::{RoomMapping, UserMapping};
 
 #[async_trait]
 pub trait RoomStore: Send + Sync {
@@ -14,6 +14,7 @@ pub trait RoomStore: Send + Sync {
         room_id: &str,
     ) -> Result<Option<RoomMapping>, DatabaseError>;
     async fn get_room_by_id(&self, id: i64) -> Result<Option<RoomMapping>, DatabaseError>;
+    async fn count_rooms(&self) -> Result<i64, DatabaseError>;
     async fn list_room_mappings(
         &self,
         limit: i64,

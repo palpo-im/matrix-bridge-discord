@@ -6,8 +6,8 @@ use diesel::sqlite::SqliteConnection;
 use crate::db::schema_sqlite::{room_mappings, user_mappings};
 
 use super::{
-    models::{RoomMapping, UserMapping},
     DatabaseError,
+    models::{RoomMapping, UserMapping},
 };
 
 // Helper function to convert DateTime to ISO string for SQLite
@@ -119,10 +119,7 @@ struct UpdateUserMapping<'a> {
     updated_at: String,
 }
 
-fn with_connection<T, F>(
-    conn: &mut SqliteConnection,
-    operation: F,
-) -> Result<T, DatabaseError>
+fn with_connection<T, F>(conn: &mut SqliteConnection, operation: F) -> Result<T, DatabaseError>
 where
     F: FnOnce(&mut SqliteConnection) -> Result<T, DatabaseError>,
 {
@@ -207,6 +204,20 @@ impl super::RoomStore for SqliteRoomStore {
         .map_err(|e| DatabaseError::Query(format!("database task failed: {e}")))?
     }
 
+    async fn count_rooms(&self) -> Result<i64, DatabaseError> {
+        tokio::task::spawn_blocking(move || {
+            let mut conn = SqliteConnection::establish(":memory:")
+                .map_err(|e| DatabaseError::Connection(e.to_string()))?;
+            use crate::db::schema_sqlite::room_mappings::dsl::*;
+            room_mappings
+                .count()
+                .get_result(&mut conn)
+                .map_err(|e| DatabaseError::Query(e.to_string()))
+        })
+        .await
+        .map_err(|e| DatabaseError::Query(format!("database task failed: {e}")))?
+    }
+
     async fn list_room_mappings(
         &self,
         limit: i64,
@@ -224,10 +235,7 @@ impl super::RoomStore for SqliteRoomStore {
                 .load::<DbRoomMapping>(&mut conn)
                 .map_err(|e| DatabaseError::Query(e.to_string()))?;
 
-            results
-                .into_iter()
-                .map(|m| m.to_room_mapping())
-                .collect()
+            results.into_iter().map(|m| m.to_room_mapping()).collect()
         })
         .await
         .map_err(|e| DatabaseError::Query(format!("database task failed: {e}")))?

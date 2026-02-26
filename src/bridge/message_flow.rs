@@ -198,11 +198,12 @@ fn parse_relation(content: &Value) -> Option<MessageRelation> {
         .get("rel_type")
         .and_then(Value::as_str)
         .is_some_and(|kind| kind == "m.replace")
-        && let Some(edit_event_id) = relates_to.get("event_id").and_then(Value::as_str) {
-            return Some(MessageRelation::Replace {
-                event_id: edit_event_id.to_string(),
-            });
-        }
+        && let Some(edit_event_id) = relates_to.get("event_id").and_then(Value::as_str)
+    {
+        return Some(MessageRelation::Replace {
+            event_id: edit_event_id.to_string(),
+        });
+    }
     None
 }
 
@@ -234,8 +235,8 @@ mod tests {
 
     use super::{DiscordInboundMessage, MessageFlow, MessageRelation};
     use crate::config::{
-        AuthConfig, BridgeConfig, ChannelConfig, Config, DatabaseConfig, GhostConfig,
-        LoggingConfig, MetricsConfig, RoomConfig,
+        AuthConfig, BridgeConfig, ChannelConfig, ChannelDeleteOptionsConfig, Config,
+        DatabaseConfig, GhostsConfig, LimitsConfig, LoggingConfig, MetricsConfig, RoomConfig,
     };
     use crate::discord::DiscordClient;
     use crate::matrix::{MatrixAppservice, MatrixEvent};
@@ -250,19 +251,41 @@ mod tests {
                 port: 9005,
                 bind_address: "127.0.0.1".to_string(),
                 homeserver_url: "http://localhost:8008".to_string(),
+                presence_interval: 500,
+                disable_presence: false,
+                disable_typing_notifications: false,
+                disable_discord_mentions: false,
+                disable_deletion_forwarding: false,
+                enable_self_service_bridging: false,
+                disable_portal_bridging: false,
+                disable_read_receipts: false,
+                disable_everyone_mention: false,
+                disable_here_mention: false,
+                disable_join_leave_notifications: false,
+                disable_invite_notifications: false,
+                disable_room_topic_notifications: false,
+                determine_code_language: false,
+                user_limit: None,
+                admin_mxid: None,
+                invalid_token_message: "Your Discord bot token seems to be invalid".to_string(),
             },
             auth: AuthConfig {
                 bot_token: "token".to_string(),
                 client_id: None,
                 client_secret: None,
+                use_privileged_intents: false,
             },
             logging: LoggingConfig {
                 level: "info".to_string(),
+                line_date_format: "MMM-D HH:mm:ss.SSS".to_string(),
                 format: "pretty".to_string(),
                 file: None,
+                files: vec![],
             },
             database: DatabaseConfig {
-                url: "postgres://localhost/bridge".to_string(),
+                url: Some("postgres://localhost/bridge".to_string()),
+                conn_string: None,
+                filename: None,
                 max_connections: Some(1),
                 min_connections: Some(1),
             },
@@ -270,13 +293,19 @@ mod tests {
                 default_visibility: "private".to_string(),
                 room_alias_prefix: "_discord".to_string(),
                 enable_room_creation: true,
+                kick_for: 30000,
             },
             channel: ChannelConfig {
                 enable_channel_creation: false,
                 channel_name_format: ":name".to_string(),
+                name_pattern: "[Discord] :guild :name".to_string(),
                 topic_format: ":topic".to_string(),
+                delete_options: ChannelDeleteOptionsConfig::default(),
             },
-            ghosts: GhostConfig {
+            limits: LimitsConfig::default(),
+            ghosts: GhostsConfig {
+                nick_pattern: ":nick".to_string(),
+                username_pattern: ":username#:tag".to_string(),
                 username_template: "_discord_:id".to_string(),
                 displayname_template: ":username".to_string(),
                 avatar_url_template: None,

@@ -41,12 +41,16 @@ pub struct DiscordMessage {
 #[derive(Clone)]
 pub struct DiscordClient {
     _config: Arc<Config>,
+    send_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl DiscordClient {
     pub async fn new(config: Arc<Config>) -> Result<Self> {
         info!("initializing discord client");
-        Ok(Self { _config: config })
+        Ok(Self {
+            _config: config,
+            send_lock: Arc::new(tokio::sync::Mutex::new(())),
+        })
     }
 
     pub async fn start(&self) -> Result<()> {
@@ -55,6 +59,13 @@ impl DiscordClient {
     }
 
     pub async fn send_message(&self, channel_id: &str, content: &str) -> Result<String> {
+        let _guard = self.send_lock.lock().await;
+
+        let delay = self._config.limits.discord_send_delay;
+        if delay > 0 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(delay)).await;
+        }
+
         info!("forwarding message to discord channel {}", channel_id);
         Ok(format!("mock:{}:{}", channel_id, content.len()))
     }

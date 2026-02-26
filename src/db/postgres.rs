@@ -7,8 +7,8 @@ use crate::db::manager::Pool;
 use crate::db::schema::{room_mappings, user_mappings};
 
 use super::{
-    models::{RoomMapping, UserMapping},
     DatabaseError,
+    models::{RoomMapping, UserMapping},
 };
 
 #[derive(Debug, Clone, Queryable, Selectable)]
@@ -182,6 +182,18 @@ impl super::RoomStore for PostgresRoomStore {
                 .first::<DbRoomMapping>(conn)
                 .optional()
                 .map(|value| value.map(Into::into))
+                .map_err(|e| DatabaseError::Query(e.to_string()))
+        })
+        .await
+    }
+
+    async fn count_rooms(&self) -> Result<i64, DatabaseError> {
+        let pool = self.pool.clone();
+        with_connection(pool, move |conn| {
+            use crate::db::schema::room_mappings::dsl::*;
+            room_mappings
+                .count()
+                .get_result(conn)
                 .map_err(|e| DatabaseError::Query(e.to_string()))
         })
         .await
