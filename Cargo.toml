@@ -20,7 +20,7 @@ sqlite = []
 discord = ["serenity"]
 
 [dependencies]
-salvo = { version = "0.89", features = ["full", "oapi", "quinn"] }
+salvo = { version = "0.89", features = ["oapi", "quinn"] }
 tokio = { version = "1.40", features = ["full"] }
 hyper = { version = "1.8.1", features = ["full"] }
 serenity = { version = "0.12", default-features = false, features = [
@@ -63,7 +63,7 @@ matrix-bot-sdk = { version = "0.2.3", features = ["appservice"] }
 
 [dev-dependencies]
 tokio-test = "0.4"
-tempfile = "3.26.0"
+tempfile = "3.25.0"
 test-case = "3.3"
 
 [profile.release]
