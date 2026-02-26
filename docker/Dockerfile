@@ -1,5 +1,5 @@
 # ---- Stage 1: Compute dependency recipe ----
-FROM lukemathwalker/cargo-chef:latest-rust-bookworm AS chef
+FROM lukemathwalker/cargo-chef:latest-rust-1.93.0-bookworm AS chef
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config libssl-dev libpq-dev \
     && rm -rf /var/lib/apt/lists/*
