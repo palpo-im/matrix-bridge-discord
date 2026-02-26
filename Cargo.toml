@@ -72,6 +72,12 @@ codegen-units = 1
 panic = "abort"
 strip = true
 
+# Faster builds for Docker CI — thin LTO instead of fat LTO
+[profile.docker]
+inherits = "release"
+lto = "thin"
+codegen-units = 4
+
 [profile.dev]
 debug = true
 opt-level = 0

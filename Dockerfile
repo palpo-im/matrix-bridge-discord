@@ -1,22 +1,27 @@
-FROM debian:bookworm AS builder
-
-# Install Rust and build dependencies
-RUN apt-get update && apt-get install -y \
-    curl \
-    gcc \
-    pkg-config \
-    libssl-dev \
-    libpq-dev \
-    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
+# ---- Stage 1: Compute dependency recipe ----
+FROM lukemathwalker/cargo-chef:latest-rust-bookworm AS chef
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config libssl-dev libpq-dev \
     && rm -rf /var/lib/apt/lists/*
-
-ENV PATH="/root/.cargo/bin:${PATH}"
-
 WORKDIR /workspace
+
+FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
 COPY src/ ./src/
-RUN cargo build --release -p matrix-bridge-discord
+RUN cargo chef prepare --recipe-path recipe.json
 
+# ---- Stage 2: Build dependencies (cached unless Cargo.toml/lock change) ----
+FROM chef AS builder
+COPY --from=planner /workspace/recipe.json recipe.json
+RUN cargo chef cook --profile docker --recipe-path recipe.json
+
+# ---- Stage 3: Build the application ----
+COPY Cargo.toml Cargo.lock ./
+COPY src/ ./src/
+COPY migrations/ ./migrations/
+RUN cargo build --profile docker -p matrix-bridge-discord
+
+# ---- Stage 4: Runtime ----
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -27,7 +32,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN useradd -m -u 1000 appuser
 
-COPY --from=builder /workspace/target/release/matrix-bridge-discord /usr/local/bin/matrix-bridge-discord
+COPY --from=builder /workspace/target/docker/matrix-bridge-discord /usr/local/bin/matrix-bridge-discord
+
+RUN mkdir -p /data && chown appuser:appuser /data
 
 USER appuser
 WORKDIR /data
