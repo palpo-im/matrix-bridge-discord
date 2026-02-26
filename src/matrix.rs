@@ -52,6 +52,10 @@ impl AppserviceHandler for BridgeAppserviceHandler {
                     event_type: event_type.to_owned(),
                     room_id: room_id.to_owned(),
                     sender: sender.to_owned(),
+                    state_key: event
+                        .get("state_key")
+                        .and_then(|v| v.as_str())
+                        .map(ToOwned::to_owned),
                     content: event.get("content").cloned(),
                     timestamp: event.get("origin_server_ts").map(|v| v.to_string()),
                 };
@@ -78,6 +82,7 @@ pub struct MatrixEvent {
     pub event_type: String,
     pub room_id: String,
     pub sender: String,
+    pub state_key: Option<String>,
     pub content: Option<Value>,
     pub timestamp: Option<String>,
 }

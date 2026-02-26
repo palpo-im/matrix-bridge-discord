@@ -321,6 +321,7 @@ mod tests {
             event_type: "m.room.message".to_string(),
             room_id: "!room:example.org".to_string(),
             sender: "@alice:example.org".to_string(),
+            state_key: None,
             content: Some(json!({
                 "msgtype": "m.image",
                 "body": "cat.png",
@@ -357,6 +358,7 @@ mod tests {
             event_type: "m.room.message".to_string(),
             room_id: "!room:example.org".to_string(),
             sender: "@alice:example.org".to_string(),
+            state_key: None,
             content: Some(json!({
                 "msgtype": "m.text",
                 "body": "new body",

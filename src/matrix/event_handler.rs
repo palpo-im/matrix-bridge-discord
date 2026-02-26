@@ -43,7 +43,12 @@ impl MatrixEventHandler for MatrixEventHandlerImpl {
         Ok(())
     }
 
-    async fn handle_room_member(&self, _event: &MatrixEvent) -> Result<()> {
+    async fn handle_room_member(&self, event: &MatrixEvent) -> Result<()> {
+        if let Some(bridge) = &self.bridge {
+            bridge.handle_matrix_member(event).await?;
+        } else {
+            debug!("matrix member received without bridge binding");
+        }
         Ok(())
     }
 

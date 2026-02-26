@@ -239,6 +239,36 @@ impl BridgeCore {
         Ok(())
     }
 
+    pub async fn handle_matrix_member(&self, event: &MatrixEvent) -> Result<()> {
+        if let Some(content) = event.content.as_ref().and_then(|c| c.as_object()) {
+            if let Some(membership) = content.get("membership").and_then(|v| v.as_str()) {
+                if membership == "leave" {
+                    if let Some(state_key) = &event.state_key {
+                        if event.sender != *state_key {
+                            let kick_for = self.matrix_client.config().room.kick_for;
+                            if kick_for > 0 {
+                                let target_user = state_key.clone();
+                                let room_id = event.room_id.clone();
+                                tokio::spawn(async move {
+                                    tokio::time::sleep(tokio::time::Duration::from_millis(
+                                        kick_for,
+                                    ))
+                                    .await;
+                                    info!(
+                                        "Lifting kick for {} in {} after {} ms, restoring Discord permissions",
+                                        target_user, room_id, kick_for
+                                    );
+                                    // TODO: Actually overwrite Discord permissions via DiscordClient when fully implemented
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub async fn bridge_matrix_room(
         &self,
         matrix_room_id: &str,
@@ -280,8 +310,8 @@ impl BridgeCore {
         let mapping = RoomMapping {
             id: 0,
             matrix_room_id: matrix_room_id.to_string(),
-            discord_channel_id: channel.id,
-            discord_channel_name: channel.name,
+            discord_channel_id: channel.id.clone(),
+            discord_channel_name: channel.name.clone(),
             discord_guild_id: guild_id.to_string(),
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -290,6 +320,25 @@ impl BridgeCore {
             .room_store()
             .create_room_mapping(&mapping)
             .await?;
+
+        let name_pattern = &self.matrix_client.config().channel.name_pattern;
+        let formatted_name = crate::utils::formatting::apply_pattern_string(
+            name_pattern,
+            &[
+                ("guild", &channel.guild_id.clone()),
+                ("name", &format!("#{}", mapping.discord_channel_name)),
+            ],
+        );
+
+        let event_content = serde_json::json!({
+            "name": formatted_name
+        });
+        let _ = self
+            .matrix_client
+            .appservice
+            .client
+            .send_state_event(matrix_room_id, "m.room.name", "", &event_content)
+            .await;
 
         Ok("I have bridged this room to your channel".to_string())
     }
@@ -304,6 +353,50 @@ impl BridgeCore {
         let Some(mapping) = room_mapping else {
             return Ok("This room is not bridged.".to_string());
         };
+
+        let delete_options = &self.matrix_client.config().channel.delete_options;
+        let client = &self.matrix_client.appservice.client;
+
+        if let Some(prefix) = &delete_options.name_prefix {
+            if let Ok(state) = client
+                .get_room_state_event(matrix_room_id, "m.room.name", "")
+                .await
+            {
+                if let Some(name) = state.get("name").and_then(|n| n.as_str()) {
+                    let new_name = format!("{}{}", prefix, name);
+                    let event_content = serde_json::json!({ "name": new_name });
+                    let _ = client
+                        .send_state_event(matrix_room_id, "m.room.name", "", &event_content)
+                        .await;
+                }
+            }
+        }
+
+        if let Some(prefix) = &delete_options.topic_prefix {
+            if let Ok(state) = client
+                .get_room_state_event(matrix_room_id, "m.room.topic", "")
+                .await
+            {
+                if let Some(topic) = state.get("topic").and_then(|t| t.as_str()) {
+                    let new_topic = format!("{}{}", prefix, topic);
+                    let event_content = serde_json::json!({ "topic": new_topic });
+                    let _ = client
+                        .send_state_event(matrix_room_id, "m.room.topic", "", &event_content)
+                        .await;
+                }
+            }
+        }
+
+        if delete_options.unset_room_alias {
+            let alias_localpart = format!("_discord_{}", mapping.discord_channel_id);
+            let alias = format!(
+                "#{}:{}",
+                alias_localpart,
+                self.matrix_client.config().bridge.domain
+            );
+            let _ = client.delete_room_alias(&alias).await;
+        }
+
         self.db_manager
             .room_store()
             .delete_room_mapping(mapping.id)
