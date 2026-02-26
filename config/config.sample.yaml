@@ -1,59 +1,83 @@
-# Matrix-Discord Bridge Configuration
+# Matrix Discord Bridge sample configuration.
+# Use snake_case keys in this file.
 
 bridge:
-  domain: "example.com"          # Matrix server domain
-  port: 9005                      # Bridge service port
-  bind_address: "0.0.0.0"        # Bind address
-  homeserver_url: "https://matrix.example.com"  # Optional: custom homeserver URL
+  domain: "localhost"
+  homeserver_url: "http://localhost:8008"
+  port: 9005
+  bind_address: "0.0.0.0"
+  bridge_id: "discord"
+  appservice_token: "CHANGE_ME_AS_TOKEN"
+  homeserver_token: "CHANGE_ME_HS_TOKEN"
+  presence_interval: 500
+  disable_presence: false
+  disable_typing_notifications: false
+  disable_deletion_forwarding: false
+  disable_portal_bridging: false
+  enable_self_service_bridging: false
+  disable_read_receipts: false
+  disable_join_leave_notifications: false
+  disable_invite_notifications: false
+  disable_room_topic_notifications: false
+  determine_code_language: false
+  admin_mxid: "@admin:localhost"
+  invalid_token_message: "Your Discord bot token seems to be invalid, and the bridge cannot function. Please update it in your bridge settings and restart the bridge"
+  user_limit: null
+  user_activity:
+    min_user_active_days: 0
+    inactive_after_days: 0
 
 auth:
-  bot_token: "YOUR_DISCORD_BOT_TOKEN"  # Discord bot token
-  client_id: "YOUR_CLIENT_ID"           # Optional: OAuth client ID
-  client_secret: "YOUR_CLIENT_SECRET"   # Optional: OAuth client secret
+  client_id: "12345"
+  bot_token: "CHANGE_ME_DISCORD_BOT_TOKEN"
+  client_secret: null
+  use_privileged_intents: false
 
 logging:
-  level: "info"                   # Log level: trace, debug, info, warn, error
-  format: "pretty"                # Log format: pretty, json
-  file: null                      # Optional: log file path
+  level: "info"
+  line_date_format: "MMM-D HH:mm:ss.SSS"
+  format: "pretty"
+  files: []
 
 database:
-  # Database URL
-  # The database type is automatically detected based on the prefix:
-  #
-  # PostgreSQL:
-  #   - postgresql://user:password@localhost:5432/dbname
-  #   - postgres://user:password@localhost:5432/dbname
-  #
-  # SQLite:
-  #   - sqlite:///path/to/database.db
-  #   - sqlite://data/matrix-bridge.db
-  #
-  # Examples:
-  #   url: "postgresql://bridge_user:secure_password@localhost:5432/matrix_bridge"
-  #   url: "sqlite:///data/matrix-bridge.db"
-  #
-  url: "postgresql://user:password@localhost/matrix_discord"
-
-  # Connection pool settings (PostgreSQL only)
-  max_connections: 10             # Maximum database connections
-  min_connections: 1              # Minimum database connections
+  # Choose one:
+  # filename: "discord.db"
+  # conn_string: "postgresql://user:password@localhost/matrix_discord"
+  url: "sqlite://./discord.db"
+  max_connections: 10
+  min_connections: 1
 
 room:
-  default_visibility: "public"   # Default room visibility
-  room_alias_prefix: "_discord_"  # Prefix for Discord room aliases
-  enable_room_creation: true      # Allow automatic room creation
+  default_visibility: "public"
+  room_alias_prefix: "_discord_"
+  enable_room_creation: true
+  kick_for: 30000
 
 channel:
-  enable_channel_creation: true  # Allow automatic channel creation
-  channel_name_format: "{guild_name} - {channel_name}"  # Channel name format
-  topic_format: "Bridged from Matrix room {room_id}"   # Channel topic format
+  name_pattern: "[Discord] :guild :name"
+  enable_channel_creation: true
+  channel_name_format: "{guild_name} - {channel_name}"
+  topic_format: "Bridged from Matrix room {room_id}"
+  delete_options:
+    disable_messaging: false
+    unset_room_alias: true
+    unlist_from_directory: true
+    set_invite_only: true
+    ghosts_leave: true
+
+limits:
+  room_ghost_join_delay: 6000
+  discord_send_delay: 1500
+  room_count: -1
 
 ghosts:
-  username_template: "_discord_{user_id}"     # Matrix username template
-  displayname_template: "{username}#{discriminator}"  # Display name template
-  avatar_url_template: null                     # Optional: avatar URL template
+  nick_pattern: ":nick"
+  username_pattern: ":username#:tag"
+  username_template: "_discord_{user_id}"
+  displayname_template: "{username}#{discriminator}"
+  avatar_url_template: null
 
 metrics:
-  enabled: false                  # Enable metrics collection
-  port: 9090                     # Metrics port
-  bind_address: "127.0.0.1"      # Metrics bind address
+  enabled: false
+  port: 9001
+  bind_address: "127.0.0.1"

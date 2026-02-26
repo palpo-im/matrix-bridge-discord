@@ -268,6 +268,7 @@ mod tests {
                 user_limit: None,
                 admin_mxid: None,
                 invalid_token_message: "Your Discord bot token seems to be invalid".to_string(),
+                user_activity: None,
             },
             auth: AuthConfig {
                 bot_token: "token".to_string(),
@@ -286,6 +287,8 @@ mod tests {
                 url: Some("postgres://localhost/bridge".to_string()),
                 conn_string: None,
                 filename: None,
+                user_store_path: None,
+                room_store_path: None,
                 max_connections: Some(1),
                 min_connections: Some(1),
             },

@@ -4,7 +4,7 @@ use std::{collections::HashSet, time::Duration};
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Utc;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::db::{DatabaseManager, RoomMapping};
 use crate::discord::{
@@ -14,6 +14,7 @@ use crate::matrix::{MatrixAppservice, MatrixCommandHandler, MatrixCommandOutcome
 
 pub mod message_flow;
 pub mod presence_handler;
+pub mod provisioning;
 
 use self::message_flow::{
     DiscordInboundMessage, MessageFlow, OutboundDiscordMessage, OutboundMatrixMessage,
@@ -21,6 +22,7 @@ use self::message_flow::{
 use self::presence_handler::{
     DiscordPresence, MatrixPresenceState, MatrixPresenceTarget, PresenceHandler,
 };
+use self::provisioning::{ApprovalResponseStatus, ProvisioningCoordinator, ProvisioningError};
 
 #[derive(Debug, Clone)]
 pub struct DiscordMessageContext {
@@ -42,6 +44,7 @@ pub struct BridgeCore {
     matrix_command_handler: Arc<MatrixCommandHandler>,
     discord_command_handler: Arc<DiscordCommandHandler>,
     presence_handler: Arc<PresenceHandler>,
+    provisioning: Arc<ProvisioningCoordinator>,
 }
 
 impl BridgeCore {
@@ -50,14 +53,19 @@ impl BridgeCore {
         discord_client: Arc<DiscordClient>,
         db_manager: Arc<DatabaseManager>,
     ) -> Self {
+        let bridge_config = matrix_client.config().bridge.clone();
         Self {
             message_flow: Arc::new(MessageFlow::new(
                 matrix_client.clone(),
                 discord_client.clone(),
             )),
-            matrix_command_handler: Arc::new(MatrixCommandHandler::default()),
+            matrix_command_handler: Arc::new(MatrixCommandHandler::new(
+                bridge_config.enable_self_service_bridging,
+                None,
+            )),
             discord_command_handler: Arc::new(DiscordCommandHandler::new()),
             presence_handler: Arc::new(PresenceHandler::new(None)),
+            provisioning: Arc::new(ProvisioningCoordinator::default()),
             matrix_client,
             discord_client,
             db_manager,
@@ -70,12 +78,16 @@ impl BridgeCore {
 
         info!("bridge core started");
 
-        let mut ticker = tokio::time::interval(Duration::from_secs(5));
+        let bridge_config = self.matrix_client.config().bridge.clone();
+        let presence_interval_ms = bridge_config.presence_interval.max(250);
+        let mut ticker = tokio::time::interval(Duration::from_millis(presence_interval_ms));
         loop {
             ticker.tick().await;
-            self.presence_handler
-                .process_next(self.matrix_client.as_ref())
-                .await?;
+            if !bridge_config.disable_presence {
+                self.presence_handler
+                    .process_next(self.matrix_client.as_ref())
+                    .await?;
+            }
             debug!("bridge heartbeat");
         }
     }
@@ -223,7 +235,12 @@ impl BridgeCore {
                 channel_id,
             } => {
                 let reply = self
-                    .bridge_matrix_room(&event.room_id, &guild_id, &channel_id)
+                    .request_bridge_matrix_room(
+                        &event.room_id,
+                        &event.sender,
+                        &guild_id,
+                        &channel_id,
+                    )
                     .await?;
                 self.matrix_client
                     .send_notice(&event.room_id, &reply)
@@ -242,31 +259,105 @@ impl BridgeCore {
     pub async fn handle_matrix_member(&self, event: &MatrixEvent) -> Result<()> {
         if let Some(content) = event.content.as_ref().and_then(|c| c.as_object()) {
             if let Some(membership) = content.get("membership").and_then(|v| v.as_str()) {
-                if membership == "leave" {
-                    if let Some(state_key) = &event.state_key {
-                        if event.sender != *state_key {
-                            let kick_for = self.matrix_client.config().room.kick_for;
-                            if kick_for > 0 {
-                                let target_user = state_key.clone();
-                                let room_id = event.room_id.clone();
-                                tokio::spawn(async move {
-                                    tokio::time::sleep(tokio::time::Duration::from_millis(
-                                        kick_for,
-                                    ))
-                                    .await;
-                                    info!(
-                                        "Lifting kick for {} in {} after {} ms, restoring Discord permissions",
-                                        target_user, room_id, kick_for
-                                    );
-                                    // TODO: Actually overwrite Discord permissions via DiscordClient when fully implemented
-                                });
-                            }
+                let bot_user_id = self.matrix_client.bot_user_id();
+                if membership == "invite"
+                    && event.state_key.as_deref() == Some(bot_user_id.as_str())
+                {
+                    match self
+                        .matrix_client
+                        .appservice
+                        .join_room(&event.room_id)
+                        .await
+                    {
+                        Ok(joined) => {
+                            info!("joined invited room {}", joined);
                         }
+                        Err(err) => {
+                            warn!("failed to join invited room {}: {}", event.room_id, err);
+                        }
+                    }
+                }
+
+                if membership == "leave"
+                    && let Some(state_key) = &event.state_key
+                    && event.sender != *state_key
+                {
+                    let kick_for = self.matrix_client.config().room.kick_for;
+                    if kick_for > 0 {
+                        let target_user = state_key.clone();
+                        let room_id = event.room_id.clone();
+                        tokio::spawn(async move {
+                            tokio::time::sleep(tokio::time::Duration::from_millis(kick_for)).await;
+                            info!(
+                                "Lifting kick for {} in {} after {} ms, restoring Discord permissions",
+                                target_user, room_id, kick_for
+                            );
+                            // TODO: Actually overwrite Discord permissions via DiscordClient when fully implemented
+                        });
                     }
                 }
             }
         }
         Ok(())
+    }
+
+    pub async fn request_bridge_matrix_room(
+        &self,
+        matrix_room_id: &str,
+        matrix_requestor: &str,
+        guild_id: &str,
+        channel_id: &str,
+    ) -> Result<String> {
+        if let Some(limit_message) = self.check_room_limit().await? {
+            return Ok(limit_message);
+        }
+
+        if self
+            .db_manager
+            .room_store()
+            .get_room_by_discord_channel(channel_id)
+            .await?
+            .is_some()
+        {
+            return Ok("This Discord channel is already bridged.".to_string());
+        }
+
+        let Some(channel) = self.discord_client.get_channel(channel_id).await? else {
+            return Ok(
+                "There was a problem bridging that channel - channel was not found.".to_string(),
+            );
+        };
+
+        self.matrix_client
+            .send_notice(
+                matrix_room_id,
+                "I'm asking permission from the guild administrators to make this bridge.",
+            )
+            .await?;
+
+        match self
+            .provisioning
+            .ask_bridge_permission(self.discord_client.as_ref(), &channel.id, matrix_requestor)
+            .await
+        {
+            Ok(()) => {
+                self.bridge_matrix_room(matrix_room_id, guild_id, channel_id)
+                    .await
+            }
+            Err(ProvisioningError::TimedOut) => {
+                Ok("Timed out waiting for a response from the Discord owners.".to_string())
+            }
+            Err(ProvisioningError::Declined) => {
+                Ok("The bridge has been declined by the Discord guild.".to_string())
+            }
+            Err(err) => {
+                warn!(
+                    "failed to obtain bridge approval for matrix_room={} channel={}: {}",
+                    matrix_room_id, channel_id, err
+                );
+                Ok("There was a problem bridging that channel - has the guild owner approved the bridge?".to_string())
+            }
+        }
     }
 
     pub async fn bridge_matrix_room(
@@ -275,20 +366,8 @@ impl BridgeCore {
         guild_id: &str,
         channel_id: &str,
     ) -> Result<String> {
-        let room_count_limit = self.matrix_client.config().limits.room_count;
-        if room_count_limit >= 0 {
-            let current_count = self
-                .db_manager
-                .room_store()
-                .count_rooms()
-                .await
-                .unwrap_or(0);
-            if current_count >= room_count_limit as i64 {
-                return Ok(format!(
-                    "Cannot bridge this room - the bridge has reached its maximum room limit of {}.",
-                    room_count_limit
-                ));
-            }
+        if let Some(limit_message) = self.check_room_limit().await? {
+            return Ok(limit_message);
         }
 
         if self
@@ -343,6 +422,23 @@ impl BridgeCore {
         Ok("I have bridged this room to your channel".to_string())
     }
 
+    async fn check_room_limit(&self) -> Result<Option<String>> {
+        let room_count_limit = self.matrix_client.config().limits.room_count;
+        if room_count_limit < 0 {
+            return Ok(None);
+        }
+
+        let current_count = self.db_manager.room_store().count_rooms().await?;
+        if current_count >= room_count_limit as i64 {
+            Ok(Some(format!(
+                "This bridge has reached its room limit of {}. Unbridge another room to allow for new connections.",
+                room_count_limit
+            )))
+        } else {
+            Ok(None)
+        }
+    }
+
     pub async fn unbridge_matrix_room(&self, matrix_room_id: &str) -> Result<String> {
         let room_mapping = self
             .db_manager
@@ -388,7 +484,11 @@ impl BridgeCore {
         }
 
         if delete_options.unset_room_alias {
-            let alias_localpart = format!("_discord_{}", mapping.discord_channel_id);
+            let alias_localpart = format!(
+                "{}{}",
+                self.matrix_client.config().room.room_alias_prefix,
+                mapping.discord_channel_id
+            );
             let alias = format!(
                 "#{}:{}",
                 alias_localpart,
@@ -581,19 +681,29 @@ impl BridgeCore {
                     .await?;
             }
             DiscordCommandOutcome::ApproveRequested => {
+                let reply = match self.provisioning.mark_approval(&ctx.channel_id, true) {
+                    ApprovalResponseStatus::Applied => {
+                        "Thanks for your response! The matrix bridge has been approved."
+                    }
+                    ApprovalResponseStatus::Expired => {
+                        "Thanks for your response, however it has arrived after the deadline - sorry!"
+                    }
+                };
                 self.discord_client
-                    .send_message(
-                        &ctx.channel_id,
-                        "Thanks for your response! The matrix bridge has been approved.",
-                    )
+                    .send_message(&ctx.channel_id, reply)
                     .await?;
             }
             DiscordCommandOutcome::DenyRequested => {
+                let reply = match self.provisioning.mark_approval(&ctx.channel_id, false) {
+                    ApprovalResponseStatus::Applied => {
+                        "Thanks for your response! The matrix bridge has been declined."
+                    }
+                    ApprovalResponseStatus::Expired => {
+                        "Thanks for your response, however it has arrived after the deadline - sorry!"
+                    }
+                };
                 self.discord_client
-                    .send_message(
-                        &ctx.channel_id,
-                        "Thanks for your response! The matrix bridge has been declined.",
-                    )
+                    .send_message(&ctx.channel_id, reply)
                     .await?;
             }
             DiscordCommandOutcome::ModerationRequested {

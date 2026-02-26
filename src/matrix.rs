@@ -128,6 +128,10 @@ impl MatrixAppservice {
         self.config.clone()
     }
 
+    pub fn bot_user_id(&self) -> String {
+        format!("@_discord_:{}", self.config.bridge.domain)
+    }
+
     pub async fn set_processor(&self, processor: Arc<MatrixEventProcessor>) {
         self.handler.write().await.processor = Some(processor);
     }
