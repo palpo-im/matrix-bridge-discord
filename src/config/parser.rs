@@ -1,10 +1,12 @@
 use super::ConfigError;
-use serde::{Deserialize, Serialize};
-use std::path::Path;
+use serde::{Deserialize, Deserializer, Serialize};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
     pub bridge: BridgeConfig,
+    #[serde(default)]
+    pub registration: RegistrationConfig,
     pub auth: AuthConfig,
     pub logging: LoggingConfig,
     pub database: DatabaseConfig,
@@ -24,11 +26,6 @@ pub struct BridgeConfig {
     pub port: u16,
     #[serde(default = "default_bind_address")]
     pub bind_address: String,
-    pub bridge_id: String,
-    #[serde(alias = "as_token")]
-    pub appservice_token: String,
-    #[serde(alias = "hs_token")]
-    pub homeserver_token: String,
     #[serde(default)]
     pub homeserver_url: String,
     #[serde(default = "default_presence_interval")]
@@ -67,6 +64,66 @@ pub struct BridgeConfig {
     pub invalid_token_message: String,
     #[serde(default)]
     pub user_activity: Option<UserActivityConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RegistrationConfig {
+    #[serde(default, alias = "id", alias = "bridge_id")]
+    pub bridge_id: String,
+    #[serde(default, alias = "as_token", alias = "appservice_token")]
+    pub appservice_token: String,
+    #[serde(default, alias = "hs_token", alias = "homeserver_token")]
+    pub homeserver_token: String,
+    #[serde(default = "default_sender_localpart")]
+    pub sender_localpart: String,
+    #[serde(default)]
+    pub namespaces: RegistrationNamespaces,
+    #[serde(default)]
+    pub rate_limited: bool,
+    #[serde(
+        default = "default_registration_protocols",
+        alias = "protocol",
+        deserialize_with = "deserialize_registration_protocols"
+    )]
+    pub protocols: Vec<String>,
+}
+
+impl Default for RegistrationConfig {
+    fn default() -> Self {
+        Self {
+            bridge_id: String::new(),
+            appservice_token: String::new(),
+            homeserver_token: String::new(),
+            sender_localpart: default_sender_localpart(),
+            namespaces: RegistrationNamespaces::default(),
+            rate_limited: false,
+            protocols: default_registration_protocols(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq, Eq)]
+pub struct RegistrationNamespaces {
+    #[serde(default)]
+    pub users: Vec<RegistrationNamespaceEntry>,
+    #[serde(default)]
+    pub aliases: Vec<RegistrationNamespaceEntry>,
+    #[serde(default)]
+    pub rooms: Vec<RegistrationNamespaceEntry>,
+}
+
+impl RegistrationNamespaces {
+    fn is_empty(&self) -> bool {
+        self.users.is_empty() && self.aliases.is_empty() && self.rooms.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq, Eq)]
+pub struct RegistrationNamespaceEntry {
+    #[serde(default)]
+    pub exclusive: bool,
+    #[serde(default)]
+    pub regex: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -304,9 +361,10 @@ impl Config {
     }
 
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, ConfigError> {
-        let content = std::fs::read_to_string(path)?;
+        let content = std::fs::read_to_string(&path)?;
         let mut config: Config = serde_yaml::from_str(&content)?;
         config.apply_env_overrides();
+        config.load_registration(path.as_ref())?;
         config.validate()?;
         Ok(config)
     }
@@ -315,6 +373,27 @@ impl Config {
         if self.bridge.domain.is_empty() {
             return Err(ConfigError::InvalidConfig(
                 "bridge.domain cannot be empty".to_string(),
+            ));
+        }
+
+        if self.registration.bridge_id.is_empty() {
+            return Err(ConfigError::InvalidConfig(
+                "registration id cannot be empty (set registration.id or provide discord-registration.yaml)"
+                    .to_string(),
+            ));
+        }
+
+        if self.registration.appservice_token.is_empty() {
+            return Err(ConfigError::InvalidConfig(
+                "registration as_token cannot be empty (set registration.as_token or provide discord-registration.yaml)"
+                    .to_string(),
+            ));
+        }
+
+        if self.registration.homeserver_token.is_empty() {
+            return Err(ConfigError::InvalidConfig(
+                "registration hs_token cannot be empty (set registration.hs_token or provide discord-registration.yaml)"
+                    .to_string(),
             ));
         }
 
@@ -349,6 +428,61 @@ impl Config {
         if let Ok(value) = std::env::var("APPSERVICE_DISCORD_AUTH_CLIENT_SECRET") {
             self.auth.client_secret = Some(value);
         }
+        if let Ok(value) = std::env::var("APPSERVICE_DISCORD_REGISTRATION_ID") {
+            self.registration.bridge_id = value;
+        }
+        if let Ok(value) = std::env::var("APPSERVICE_DISCORD_REGISTRATION_AS_TOKEN") {
+            self.registration.appservice_token = value;
+        }
+        if let Ok(value) = std::env::var("APPSERVICE_DISCORD_REGISTRATION_HS_TOKEN") {
+            self.registration.homeserver_token = value;
+        }
+        if let Ok(value) = std::env::var("APPSERVICE_DISCORD_REGISTRATION_SENDER_LOCALPART") {
+            self.registration.sender_localpart = value;
+        }
+    }
+
+    fn load_registration(&mut self, config_path: &Path) -> Result<(), ConfigError> {
+        let registration_path = std::env::var("REGISTRATION_PATH")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(default_registration_file);
+        let registration_path = resolve_registration_path(config_path, &registration_path);
+
+        if !registration_path.exists() {
+            return Ok(());
+        }
+
+        let content = std::fs::read_to_string(registration_path)?;
+        let registration: RegistrationConfig = serde_yaml::from_str(&content)?;
+
+        if self.registration.bridge_id.is_empty() {
+            self.registration.bridge_id = registration.bridge_id;
+        }
+        if self.registration.appservice_token.is_empty() {
+            self.registration.appservice_token = registration.appservice_token;
+        }
+        if self.registration.homeserver_token.is_empty() {
+            self.registration.homeserver_token = registration.homeserver_token;
+        }
+        if self.registration.sender_localpart == default_sender_localpart()
+            && registration.sender_localpart != default_sender_localpart()
+        {
+            self.registration.sender_localpart = registration.sender_localpart;
+        }
+        if self.registration.namespaces.is_empty() && !registration.namespaces.is_empty() {
+            self.registration.namespaces = registration.namespaces;
+        }
+        if !self.registration.rate_limited && registration.rate_limited {
+            self.registration.rate_limited = true;
+        }
+        if self.registration.protocols == default_registration_protocols()
+            && registration.protocols != default_registration_protocols()
+        {
+            self.registration.protocols = registration.protocols;
+        }
+
+        Ok(())
     }
 }
 
@@ -358,6 +492,46 @@ fn default_port() -> u16 {
 
 fn default_bind_address() -> String {
     "0.0.0.0".to_string()
+}
+
+fn default_registration_file() -> String {
+    "discord-registration.yaml".to_string()
+}
+
+fn resolve_registration_path(config_path: &Path, registration_path: &str) -> PathBuf {
+    let registration_path = Path::new(registration_path);
+    if registration_path.is_absolute() {
+        registration_path.to_path_buf()
+    } else if let Some(parent) = config_path.parent() {
+        parent.join(registration_path)
+    } else {
+        registration_path.to_path_buf()
+    }
+}
+
+fn default_sender_localpart() -> String {
+    "_discord_".to_string()
+}
+
+fn default_registration_protocols() -> Vec<String> {
+    vec!["discord".to_string()]
+}
+
+fn deserialize_registration_protocols<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum ProtocolValue {
+        Single(String),
+        Multiple(Vec<String>),
+    }
+
+    match ProtocolValue::deserialize(deserializer)? {
+        ProtocolValue::Single(protocol) => Ok(vec![protocol]),
+        ProtocolValue::Multiple(protocols) => Ok(protocols),
+    }
 }
 
 fn default_presence_interval() -> u64 {
