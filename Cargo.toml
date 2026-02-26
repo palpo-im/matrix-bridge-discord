@@ -63,7 +63,7 @@ matrix-bot-sdk = { version = "0.2.3", features = ["appservice"] }
 
 [dev-dependencies]
 tokio-test = "0.4"
-tempfile = "3.25.0"
+tempfile = "=3.25.0"
 test-case = "3.3"
 
 [profile.release]
