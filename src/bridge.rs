@@ -1995,6 +1995,7 @@ impl BridgeCore {
         discord_user_id: &str,
         new_nick: &str,
         new_avatar_url: Option<&str>,
+        roles: &[String],
     ) -> Result<()> {
         let user_mapping = self
             .db_manager
@@ -2013,6 +2014,24 @@ impl BridgeCore {
         }
         updated.updated_at = chrono::Utc::now();
         self.db_manager.user_store().update_user_mapping(&updated).await?;
+
+        let room_mappings = self
+            .db_manager
+            .room_store()
+            .get_rooms_by_guild(discord_guild_id)
+            .await?;
+        for room in room_mappings {
+            if let Err(err) = self
+                .matrix_client
+                .set_ghost_room_roles(discord_user_id, &room.matrix_room_id, roles)
+                .await
+            {
+                warn!(
+                    "failed to sync member roles for user={} guild={} room={}: {}",
+                    discord_user_id, discord_guild_id, room.matrix_room_id, err
+                );
+            }
+        }
 
         info!("updated user mapping for {} in guild {} with new nick {}", discord_user_id, discord_guild_id, new_nick);
         Ok(())
@@ -2049,6 +2068,7 @@ impl BridgeCore {
         discord_user_id: &str,
         display_name: &str,
         avatar_url: Option<&str>,
+        roles: &[String],
     ) -> Result<()> {
         debug!(
             "discord guild member add guild_id={} user_id={} display_name={}",
@@ -2097,6 +2117,17 @@ impl BridgeCore {
                         );
                     }
                 }
+            }
+
+            if let Err(err) = self
+                .matrix_client
+                .set_ghost_room_roles(discord_user_id, &mapping.matrix_room_id, roles)
+                .await
+            {
+                warn!(
+                    "failed to sync member roles for user={} guild={} room={}: {}",
+                    discord_user_id, discord_guild_id, mapping.matrix_room_id, err
+                );
             }
         }
 

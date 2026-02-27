@@ -323,6 +323,7 @@ impl SerenityEventHandler for ReadySignalHandler {
 
         let display_name = new.nick.as_ref().unwrap_or(&new.user.name);
         let avatar_url = new.avatar_url().or_else(|| new.user.avatar_url());
+        let roles: Vec<String> = new.roles.iter().map(|role_id| role_id.to_string()).collect();
 
         if let Err(err) = bridge
             .handle_discord_guild_member_update(
@@ -330,6 +331,7 @@ impl SerenityEventHandler for ReadySignalHandler {
                 &new.user.id.to_string(),
                 display_name,
                 avatar_url.as_deref(),
+                &roles,
             )
             .await
         {
@@ -419,6 +421,11 @@ impl SerenityEventHandler for ReadySignalHandler {
 
         let avatar_url = member.avatar_url().or_else(|| member.user.avatar_url());
         let avatar_url = avatar_url.as_deref();
+        let roles: Vec<String> = member
+            .roles
+            .iter()
+            .map(|role_id| role_id.to_string())
+            .collect();
 
         if let Err(err) = bridge
             .handle_discord_guild_member_add(
@@ -426,6 +433,7 @@ impl SerenityEventHandler for ReadySignalHandler {
                 &member.user.id.to_string(),
                 member.nick.as_deref().unwrap_or(&member.user.name),
                 avatar_url,
+                &roles,
             )
             .await
         {
