@@ -2,6 +2,7 @@ use std::{collections::HashMap, time::Duration};
 
 use parking_lot::Mutex;
 use tokio::sync::oneshot;
+use tracing::warn;
 
 use crate::discord::DiscordClient;
 
@@ -64,11 +65,11 @@ impl ProvisioningCoordinator {
             "{requestor} on matrix would like to bridge this channel. Someone with permission to manage webhooks please reply with `!matrix approve` or `!matrix deny` in the next {timeout_minutes} minutes."
         );
 
-        if discord_client
-            .send_message(channel_id, &prompt)
-            .await
-            .is_err()
-        {
+        if let Err(err) = discord_client.send_message(channel_id, &prompt).await {
+            warn!(
+                "failed to deliver bridge approval prompt to discord channel {}: {}",
+                channel_id, err
+            );
             self.pending.lock().remove(channel_id);
             return Err(ProvisioningError::DeliveryFailed);
         }

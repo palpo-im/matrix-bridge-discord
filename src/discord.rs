@@ -609,15 +609,8 @@ impl DiscordClient {
     }
 
     pub async fn send_message(&self, channel_id: &str, content: &str) -> Result<String> {
-        let _guard = self.send_lock.lock().await;
-
-        let delay = self._config.limits.discord_send_delay;
-        if delay > 0 {
-            tokio::time::sleep(tokio::time::Duration::from_millis(delay)).await;
-        }
-
-        info!("forwarding message to discord channel {}", channel_id);
-        Ok(format!("mock:{}:{}", channel_id, content.len()))
+        self.send_message_with_metadata(channel_id, content, &[], None, None)
+            .await
     }
 
     pub async fn send_message_with_metadata(
@@ -668,8 +661,8 @@ impl DiscordClient {
 
         let http_guard = self.http.read().await;
         let Some(http) = http_guard.as_ref() else {
-            warn!("discord http client not available, using mock");
-            return self.send_message(channel_id, content).await;
+            warn!("discord http client not available");
+            return Err(anyhow!("discord http client not available"));
         };
 
         let channel_id_num: u64 = channel_id.parse()

@@ -989,6 +989,9 @@ impl BridgeCore {
             Err(ProvisioningError::Declined) => {
                 Ok("The bridge has been declined by the Discord guild.".to_string())
             }
+            Err(ProvisioningError::DeliveryFailed) => {
+                Ok("Failed to send approval request to Discord. Ensure the bot can send messages in that channel.".to_string())
+            }
             Err(err) => {
                 warn!(
                     "failed to obtain bridge approval for matrix_room={} channel={}: {}",
