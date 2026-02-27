@@ -1,7 +1,7 @@
 pub use self::error::DatabaseError;
 pub use self::manager::DatabaseManager;
-pub use self::models::{MessageMapping, ProcessedEvent, RoomMapping, UserMapping};
-pub use self::stores::{MessageStore, RoomStore, UserStore};
+pub use self::models::{EmojiMapping, MessageMapping, ProcessedEvent, RemoteRoomInfo, RemoteUserInfo, RoomMapping, UserMapping};
+pub use self::stores::{EmojiStore, MessageStore, RoomStore, UserStore};
 
 pub mod error;
 pub mod manager;

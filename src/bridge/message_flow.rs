@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use crate::discord::DiscordClient;
+use crate::discord::{DiscordClient, DiscordEmbed, EmbedAuthor, EmbedFooter};
 use crate::matrix::{MatrixAppservice, MatrixEvent};
 use crate::parsers::{DiscordToMatrixConverter, MatrixToDiscordConverter, MessageUtils};
 
@@ -47,9 +47,28 @@ pub struct OutboundDiscordMessage {
     pub reply_to: Option<String>,
     pub edit_of: Option<String>,
     pub attachments: Vec<String>,
+    pub embed: Option<DiscordEmbed>,
+    pub use_embed: bool,
 }
 
 impl OutboundDiscordMessage {
+    pub fn new(content: String) -> Self {
+        Self {
+            content,
+            reply_to: None,
+            edit_of: None,
+            attachments: Vec::new(),
+            embed: None,
+            use_embed: false,
+        }
+    }
+
+    pub fn with_embed(mut self, embed: DiscordEmbed) -> Self {
+        self.embed = Some(embed);
+        self.use_embed = true;
+        self
+    }
+
     pub fn render_content(&self) -> String {
         let mut parts = Vec::new();
         if let Some(reply_to) = &self.reply_to {
@@ -103,9 +122,12 @@ pub struct MessageFlow {
 
 impl MessageFlow {
     pub fn new(matrix_client: Arc<MatrixAppservice>, discord_client: Arc<DiscordClient>) -> Self {
+        let domain = matrix_client.config().bridge.domain.clone();
         Self {
             matrix_converter: Arc::new(MatrixToDiscordConverter::new(matrix_client)),
-            discord_converter: Arc::new(DiscordToMatrixConverter::new(discord_client)),
+            discord_converter: Arc::new(
+                DiscordToMatrixConverter::new(discord_client).with_domain(domain)
+            ),
         }
     }
 
@@ -170,6 +192,46 @@ impl MessageFlow {
             reply_to,
             edit_of,
             attachments,
+            embed: None,
+            use_embed: false,
+        }
+    }
+
+    pub fn matrix_to_discord_with_embed(
+        &self,
+        message: &MatrixInboundMessage,
+        sender_displayname: &str,
+        sender_avatar_url: Option<&str>,
+        reply_info: Option<(&str, &str)>,
+    ) -> OutboundDiscordMessage {
+        let reply_to = match &message.relation {
+            Some(MessageRelation::Reply { event_id }) => Some(event_id.clone()),
+            _ => None,
+        };
+        let edit_of = match &message.relation {
+            Some(MessageRelation::Replace { event_id }) => Some(event_id.clone()),
+            _ => None,
+        };
+        let attachments = message
+            .attachments
+            .iter()
+            .map(|attachment| attachment.url.clone())
+            .collect();
+
+        let embed = crate::discord::build_matrix_message_embed(
+            sender_displayname,
+            sender_avatar_url,
+            &message.body,
+            reply_info,
+        );
+
+        OutboundDiscordMessage {
+            content: String::new(),
+            reply_to,
+            edit_of,
+            attachments,
+            embed: Some(embed),
+            use_embed: true,
         }
     }
 

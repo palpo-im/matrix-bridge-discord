@@ -22,8 +22,10 @@ const INITIAL_LOGIN_RETRY_SECONDS: u64 = 2;
 const MAX_LOGIN_RETRY_SECONDS: u64 = 300;
 
 pub mod command_handler;
+pub mod embed;
 
 pub use self::command_handler::{DiscordCommandHandler, DiscordCommandOutcome, ModerationAction};
+pub use self::embed::{DiscordEmbed, EmbedAuthor, EmbedFooter, build_matrix_message_embed, build_reply_embed};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscordUser {
@@ -403,6 +405,50 @@ impl SerenityEventHandler for ReadySignalHandler {
             error!("failed to handle discord guild delete: {err}");
         }
     }
+
+    async fn guild_member_addition(&self, _ctx: SerenityContext, member: serenity::model::guild::Member) {
+        if member.user.bot {
+            return;
+        }
+
+        let bridge = self.bridge.read().await.clone();
+        let Some(bridge) = bridge else {
+            return;
+        };
+
+        if let Err(err) = bridge
+            .handle_discord_guild_member_add(
+                &member.guild_id.to_string(),
+                &member.user.id.to_string(),
+                member.nick.as_deref().unwrap_or(&member.user.name),
+                member.avatar_url().as_deref().or_else(|| member.user.avatar_url().as_deref()),
+            )
+            .await
+        {
+            error!("failed to handle discord guild member addition: {err}");
+        }
+    }
+
+    async fn guild_member_removal(&self, _ctx: SerenityContext, guild_id: GuildId, user: serenity::model::user::User, _member: Option<serenity::model::guild::Member>) {
+        if user.bot {
+            return;
+        }
+
+        let bridge = self.bridge.read().await.clone();
+        let Some(bridge) = bridge else {
+            return;
+        };
+
+        if let Err(err) = bridge
+            .handle_discord_guild_member_remove(
+                &guild_id.to_string(),
+                &user.id.to_string(),
+            )
+            .await
+        {
+            error!("failed to handle discord guild member removal: {err}");
+        }
+    }
 }
 
 fn permissions_to_names(perms: Permissions) -> std::collections::HashSet<String> {
@@ -639,6 +685,148 @@ impl DiscordClient {
         }
 
         self.send_direct_message(http, channel_id_num, content, attachments, reply_to, edit_of).await
+    }
+
+    pub async fn send_embed_as_user(
+        &self,
+        channel_id: &str,
+        embed: &DiscordEmbed,
+        username: Option<&str>,
+        avatar_url: Option<&str>,
+    ) -> Result<String> {
+        debug!(
+            "Discord send embed channel={} username={:?}",
+            channel_id,
+            username
+        );
+
+        let _guard = self.send_lock.lock().await;
+
+        let delay = self._config.limits.discord_send_delay;
+        if delay > 0 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(delay)).await;
+        }
+
+        let http_guard = self.http.read().await;
+        let Some(http) = http_guard.as_ref() else {
+            warn!("discord http client not available");
+            return Err(anyhow!("discord http client not available"));
+        };
+
+        let channel_id_num: u64 = channel_id.parse()
+            .map_err(|_| anyhow!("invalid channel id: {}", channel_id))?;
+
+        if self._config.channel.enable_webhook && username.is_some() {
+            match self.get_or_create_webhook(http, channel_id_num).await {
+                Ok(webhook_info) => {
+                    return self.send_embed_via_webhook(
+                        http,
+                        &webhook_info,
+                        embed,
+                        username.unwrap(),
+                        avatar_url,
+                    ).await;
+                }
+                Err(err) => {
+                    warn!("failed to get/create webhook for embed, falling back: {}", err);
+                }
+            }
+        }
+
+        let channel = ChannelId::new(channel_id_num);
+        use serenity::builder::{CreateMessage, CreateEmbed};
+        
+        let mut embed_builder = CreateEmbed::new();
+        
+        if let Some(ref description) = embed.description {
+            embed_builder = embed_builder.description(description);
+        }
+        
+        if let Some(ref title) = embed.title {
+            embed_builder = embed_builder.title(title);
+        }
+        
+        if let Some(color) = embed.color {
+            embed_builder = embed_builder.color(color);
+        }
+        
+        if let Some(author) = &embed.author {
+            embed_builder = embed_builder.author(
+                serenity::builder::CreateEmbedAuthor::new(&author.name)
+                    .icon_url(author.icon_url.as_deref().unwrap_or(""))
+            );
+        }
+        
+        for field in &embed.fields {
+            embed_builder = embed_builder.field(&field.name, &field.value, field.inline);
+        }
+
+        let message = channel
+            .send_message(http, CreateMessage::new().embed(embed_builder))
+            .await
+            .map_err(|e| anyhow!("failed to send embed to discord: {}", e))?;
+
+        info!("sent embed to channel {}, message_id={}", channel_id, message.id);
+        Ok(message.id.to_string())
+    }
+
+    async fn send_embed_via_webhook(
+        &self,
+        http: &Http,
+        webhook_info: &WebhookInfo,
+        embed: &DiscordEmbed,
+        username: &str,
+        avatar_url: Option<&str>,
+    ) -> Result<String> {
+        let webhook_url = format!(
+            "https://discord.com/api/webhooks/{}/{}",
+            webhook_info.id, webhook_info.token
+        );
+
+        let webhook = Webhook::from_url(http, &webhook_url).await
+            .map_err(|e| anyhow!("failed to parse webhook url: {}", e))?;
+
+        use serenity::builder::CreateEmbed;
+
+        let mut embed_builder = CreateEmbed::new();
+        
+        if let Some(ref description) = embed.description {
+            embed_builder = embed_builder.description(description);
+        }
+        
+        if let Some(ref title) = embed.title {
+            embed_builder = embed_builder.title(title);
+        }
+        
+        if let Some(color) = embed.color {
+            embed_builder = embed_builder.color(color);
+        }
+        
+        if let Some(author) = &embed.author {
+            embed_builder = embed_builder.author(
+                serenity::builder::CreateEmbedAuthor::new(&author.name)
+                    .icon_url(author.icon_url.as_deref().unwrap_or(""))
+            );
+        }
+        
+        for field in &embed.fields {
+            embed_builder = embed_builder.field(&field.name, &field.value, field.inline);
+        }
+
+        let mut builder = ExecuteWebhook::new()
+            .username(username)
+            .embeds(vec![embed_builder]);
+
+        if let Some(avatar) = avatar_url {
+            builder = builder.avatar_url(avatar);
+        }
+
+        let message = webhook.execute(http, false, builder).await
+            .map_err(|e| anyhow!("webhook embed send failed: {}", e))?
+            .ok_or_else(|| anyhow!("webhook execution returned no message"))?;
+
+        info!("sent embed via webhook to channel, message_id={}", message.id);
+        Ok(message.id.to_string())
     }
 
     async fn get_or_create_webhook(&self, http: &Http, channel_id: u64) -> Result<WebhookInfo> {

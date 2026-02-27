@@ -125,6 +125,8 @@ impl BridgeCore {
                 reply_to: None,
                 edit_of: None,
                 attachments: Vec::new(),
+                embed: None,
+                use_embed: false,
             },
         )
         .await
@@ -265,7 +267,36 @@ impl BridgeCore {
         
         let downloaded_attachments = self.download_matrix_attachments(&outbound.attachments).await;
         
-        self.send_to_discord_with_attachments(&mapping.discord_channel_id, outbound, &event.sender, downloaded_attachments)
+        let (displayname, avatar_url) = self.matrix_client
+            .get_user_profile(&event.sender)
+            .await
+            .unwrap_or(None)
+            .unwrap_or_else(|| (event.sender.clone(), None));
+
+        let avatar_for_embed = avatar_url.as_deref().and_then(|url| {
+            if url.starts_with("mxc://") {
+                let mxc_url = url.trim_start_matches("mxc://");
+                let homeserver = &self.matrix_client.config().bridge.homeserver_url;
+                Some(format!("{}/_matrix/media/r0/download/{}", homeserver.trim_end_matches('/'), mxc_url))
+            } else {
+                Some(url.to_string())
+            }
+        });
+
+        let reply_info = if let Some(ref reply_event_id) = outbound.reply_to {
+            self.get_reply_info(reply_event_id).await
+        } else {
+            None
+        };
+
+        let outbound_with_embed = self.message_flow.matrix_to_discord_with_embed(
+            &message,
+            &displayname,
+            avatar_for_embed.as_deref(),
+            reply_info.as_ref().map(|(s, b)| (s.as_str(), b.as_str())),
+        );
+
+        self.send_to_discord_with_embed(&mapping.discord_channel_id, outbound_with_embed, downloaded_attachments)
             .await?;
         Ok(())
     }
@@ -296,6 +327,116 @@ impl BridgeCore {
             }
         }
         results
+    }
+
+    async fn get_reply_info(&self, matrix_event_id: &str) -> Option<(String, String)> {
+        let mapping = self.db_manager
+            .message_store()
+            .get_by_matrix_event_id(matrix_event_id)
+            .await
+            .ok()
+            .flatten()?;
+
+        let sender_displayname = self.matrix_client
+            .get_user_profile(&mapping.matrix_room_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|(name, _)| name)
+            .unwrap_or_else(|| "Unknown".to_string());
+
+        Some((sender_displayname, "(reply)".to_string()))
+    }
+
+    pub async fn send_to_discord_with_embed(
+        &self,
+        discord_channel_id: &str,
+        outbound: message_flow::OutboundDiscordMessage,
+        attachments: Vec<(String, Option<crate::media::MediaInfo>)>,
+    ) -> Result<()> {
+        let mut last_message_id: Option<String> = None;
+
+        for (original_url, media_opt) in &attachments {
+            if let Some(media) = media_opt {
+                if media.size > 8 * 1024 * 1024 {
+                    warn!(
+                        "matrix attachment too large for discord: {} bytes, sending URL instead",
+                        media.size
+                    );
+                    let content = format!("{}: {}", media.filename, original_url);
+                    last_message_id = Some(
+                        self.discord_client
+                            .send_message(&discord_channel_id, &content)
+                            .await?,
+                    );
+                } else {
+                    match self.discord_client
+                        .send_file_as_user(
+                            discord_channel_id,
+                            &media.data,
+                            &media.content_type,
+                            &media.filename,
+                            None,
+                            None,
+                        )
+                        .await
+                    {
+                        Ok(msg_id) => {
+                            info!(
+                                "uploaded matrix attachment to discord channel={} file={} size={}",
+                                discord_channel_id, media.filename, media.size
+                            );
+                            last_message_id = Some(msg_id);
+                        }
+                        Err(e) => {
+                            warn!("failed to upload attachment to discord: {}, sending URL instead", e);
+                            let content = format!("{}: {}", media.filename, original_url);
+                            last_message_id = Some(
+                                self.discord_client
+                                    .send_message(&discord_channel_id, &content)
+                                    .await?,
+                            );
+                        }
+                    }
+                }
+            } else {
+                let content = format!("Attachment: {}", original_url);
+                last_message_id = Some(
+                    self.discord_client
+                        .send_message(&discord_channel_id, &content)
+                        .await?,
+                );
+            }
+        }
+
+        if let Some(ref embed) = outbound.embed {
+            if let Some(ref author) = embed.author {
+                last_message_id = Some(
+                    self.discord_client
+                        .send_embed_as_user(
+                            discord_channel_id,
+                            embed,
+                            Some(&author.name),
+                            author.icon_url.as_deref(),
+                        )
+                        .await?,
+                );
+            } else {
+                last_message_id = Some(
+                    self.discord_client
+                        .send_embed_as_user(discord_channel_id, embed, None, None)
+                        .await?,
+                );
+            }
+        } else if !outbound.content.is_empty() {
+            last_message_id = Some(
+                self.discord_client
+                    .send_message(&discord_channel_id, &outbound.content)
+                    .await?,
+            );
+        }
+
+        Ok(())
     }
 
     pub async fn send_to_discord_with_attachments(
@@ -548,6 +689,74 @@ impl BridgeCore {
         self.room_cache.remove(&event.room_id).await;
 
         info!("removed room mapping for encrypted room {}", event.room_id);
+        Ok(())
+    }
+
+    pub async fn handle_matrix_room_name(&self, event: &MatrixEvent) -> Result<()> {
+        if self.matrix_client.config().bridge.disable_room_topic_notifications {
+            return Ok(());
+        }
+
+        let room_mapping = self.get_room_mapping_cached(&event.room_id).await?;
+        let Some(mapping) = room_mapping else {
+            return Ok(());
+        };
+
+        let new_name = event
+            .content
+            .as_ref()
+            .and_then(|c| c.get("name").and_then(|n| n.as_str()))
+            .unwrap_or("");
+
+        let sender_displayname = self.matrix_client
+            .get_user_profile(&event.sender)
+            .await
+            .ok()
+            .flatten()
+            .map(|(name, _)| name)
+            .unwrap_or_else(|| event.sender.clone());
+
+        let message = format!("**{}** changed the room name to: {}", sender_displayname, new_name);
+        
+        self.discord_client
+            .send_message(&mapping.discord_channel_id, &message)
+            .await?;
+
+        debug!("forwarded room name change to discord channel={}", mapping.discord_channel_id);
+        Ok(())
+    }
+
+    pub async fn handle_matrix_room_topic(&self, event: &MatrixEvent) -> Result<()> {
+        if self.matrix_client.config().bridge.disable_room_topic_notifications {
+            return Ok(());
+        }
+
+        let room_mapping = self.get_room_mapping_cached(&event.room_id).await?;
+        let Some(mapping) = room_mapping else {
+            return Ok(());
+        };
+
+        let new_topic = event
+            .content
+            .as_ref()
+            .and_then(|c| c.get("topic").and_then(|t| t.as_str()))
+            .unwrap_or("");
+
+        let sender_displayname = self.matrix_client
+            .get_user_profile(&event.sender)
+            .await
+            .ok()
+            .flatten()
+            .map(|(name, _)| name)
+            .unwrap_or_else(|| event.sender.clone());
+
+        let message = format!("**{}** changed the room topic to: {}", sender_displayname, new_topic);
+        
+        self.discord_client
+            .send_message(&mapping.discord_channel_id, &message)
+            .await?;
+
+        debug!("forwarded room topic change to discord channel={}", mapping.discord_channel_id);
         Ok(())
     }
 
@@ -1514,6 +1723,120 @@ impl BridgeCore {
         }
 
         info!("cleaned up {} room mappings for deleted guild {}", affected_rooms.len(), discord_guild_id);
+        Ok(())
+    }
+
+    pub async fn handle_discord_guild_member_add(
+        &self,
+        discord_guild_id: &str,
+        discord_user_id: &str,
+        display_name: &str,
+        avatar_url: Option<&str>,
+    ) -> Result<()> {
+        debug!(
+            "discord guild member add guild_id={} user_id={} display_name={}",
+            discord_guild_id, discord_user_id, display_name
+        );
+
+        let room_mappings = self
+            .db_manager
+            .room_store()
+            .list_room_mappings(i64::MAX, 0)
+            .await?;
+
+        let guild_rooms: Vec<_> = room_mappings
+            .iter()
+            .filter(|m| m.discord_guild_id == discord_guild_id)
+            .collect();
+
+        if guild_rooms.is_empty() {
+            debug!("no rooms mapped for guild {}, skipping member add", discord_guild_id);
+            return Ok(());
+        }
+
+        self.matrix_client
+            .ensure_ghost_user_registered(discord_user_id, Some(display_name))
+            .await?;
+
+        for mapping in guild_rooms {
+            if !self.matrix_client.config().bridge.disable_join_leave_notifications {
+                let ghost_user_id = format!(
+                    "@_discord_{}:{}",
+                    discord_user_id,
+                    self.matrix_client.config().bridge.domain
+                );
+
+                match self.matrix_client.invite_user_to_room(&mapping.matrix_room_id, &ghost_user_id).await {
+                    Ok(_) => {
+                        info!(
+                            "invited ghost user {} to room {} for guild member add",
+                            ghost_user_id, mapping.matrix_room_id
+                        );
+                    }
+                    Err(e) => {
+                        warn!(
+                            "failed to invite ghost user {} to room {}: {}",
+                            ghost_user_id, mapping.matrix_room_id, e
+                        );
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub async fn handle_discord_guild_member_remove(
+        &self,
+        discord_guild_id: &str,
+        discord_user_id: &str,
+    ) -> Result<()> {
+        debug!(
+            "discord guild member remove guild_id={} user_id={}",
+            discord_guild_id, discord_user_id
+        );
+
+        let room_mappings = self
+            .db_manager
+            .room_store()
+            .list_room_mappings(i64::MAX, 0)
+            .await?;
+
+        let guild_rooms: Vec<_> = room_mappings
+            .iter()
+            .filter(|m| m.discord_guild_id == discord_guild_id)
+            .collect();
+
+        if guild_rooms.is_empty() {
+            debug!("no rooms mapped for guild {}, skipping member remove", discord_guild_id);
+            return Ok(());
+        }
+
+        for mapping in guild_rooms {
+            if !self.matrix_client.config().bridge.disable_join_leave_notifications {
+                let ghost_user_id = format!(
+                    "@_discord_{}:{}",
+                    discord_user_id,
+                    self.matrix_client.config().bridge.domain
+                );
+
+                match self.matrix_client.kick_user_from_room(&mapping.matrix_room_id, &ghost_user_id, Some("Left Discord server")).await {
+                    Ok(_) => {
+                        info!(
+                            "kicked ghost user {} from room {} for guild member remove",
+                            ghost_user_id, mapping.matrix_room_id
+                        );
+                    }
+                    Err(e) => {
+                        warn!(
+                            "failed to kick ghost user {} from room {}: {}",
+                            ghost_user_id, mapping.matrix_room_id, e
+                        );
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 

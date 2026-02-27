@@ -2,10 +2,12 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use chrono::Utc;
+use regex::Regex;
+use serde_json::{json, Value};
 
 use crate::discord::DiscordClient;
 
-use super::common::{BridgeMessage, MessageUtils, ParsedMessage};
+use super::common::{BridgeMessage, EmojiMention, MessageUtils, ParsedMessage};
 
 pub struct DiscordMessageParser {
     _client: Arc<DiscordClient>,
@@ -22,18 +24,275 @@ impl DiscordMessageParser {
 }
 
 pub struct DiscordToMatrixConverter {
-    _discord_client: Arc<DiscordClient>,
+    discord_client: Arc<DiscordClient>,
+    domain: String,
+    mention_regex: Regex,
+    channel_regex: Regex,
+    role_regex: Regex,
+    emoji_regex: Regex,
+    animated_emoji_regex: Regex,
+    everyone_regex: Regex,
+    here_regex: Regex,
+    code_block_regex: Regex,
+    inline_code_regex: Regex,
+    bold_regex: Regex,
+    italic_regex: Regex,
+    underline_regex: Regex,
+    strikethrough_regex: Regex,
+    spoiler_regex: Regex,
+    quote_regex: Regex,
 }
 
 impl DiscordToMatrixConverter {
     pub fn new(discord_client: Arc<DiscordClient>) -> Self {
         Self {
-            _discord_client: discord_client,
+            discord_client,
+            domain: String::new(),
+            mention_regex: Regex::new(r"<@!?(\d+)>").unwrap(),
+            channel_regex: Regex::new(r"<#(\d+)>").unwrap(),
+            role_regex: Regex::new(r"<@&(\d+)>").unwrap(),
+            emoji_regex: Regex::new(r"<:([a-zA-Z0-9_]+):(\d+)>").unwrap(),
+            animated_emoji_regex: Regex::new(r"<a:([a-zA-Z0-9_]+):(\d+)>").unwrap(),
+            everyone_regex: Regex::new(r"@everyone").unwrap(),
+            here_regex: Regex::new(r"@here").unwrap(),
+            code_block_regex: Regex::new(r"```(?:([a-z]*)\n)?([\s\S]*?)```").unwrap(),
+            inline_code_regex: Regex::new(r"`([^`]+)`").unwrap(),
+            bold_regex: Regex::new(r"\*\*([^*]+)\*\*").unwrap(),
+            italic_regex: Regex::new(r"\*([^*]+)\*").unwrap(),
+            underline_regex: Regex::new(r"__([^_]+)__").unwrap(),
+            strikethrough_regex: Regex::new(r"~~([^~]+)~~").unwrap(),
+            spoiler_regex: Regex::new(r"\|\|([^|]+)\|\|").unwrap(),
+            quote_regex: Regex::new(r"^> (.+)$").unwrap(),
         }
     }
 
+    pub fn with_domain(mut self, domain: String) -> Self {
+        self.domain = domain;
+        self
+    }
+
     pub fn format_for_matrix(&self, message: &str) -> String {
-        MessageUtils::sanitize_markdown(message)
+        let mut result = message.to_string();
+        result = self.convert_code_blocks_to_matrix(&result);
+        result = self.convert_inline_code_to_matrix(&result);
+        result = self.convert_mentions_to_matrix(&result);
+        result = self.convert_channels_to_matrix(&result);
+        result = self.convert_roles_to_matrix(&result);
+        result = self.convert_emojis_to_matrix(&result);
+        result = self.convert_everyone_here(&result);
+        result
+    }
+
+    pub fn format_as_html(&self, message: &str) -> String {
+        let mut result = message.to_string();
+        
+        result = self.escape_html(&result);
+        
+        result = self.convert_code_blocks_to_html(&result);
+        result = self.convert_inline_code_to_html(&result);
+        
+        result = self.convert_discord_formatting_to_html(&result);
+        
+        result = self.convert_mentions_to_html(&result);
+        result = self.convert_channels_to_html(&result);
+        result = self.convert_roles_to_html(&result);
+        result = self.convert_emojis_to_html(&result);
+        
+        result = self.convert_everyone_here_to_html(&result);
+        
+        result = self.convert_newlines_to_html(&result);
+        
+        result
+    }
+
+    fn escape_html(&self, text: &str) -> String {
+        text.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+    }
+
+    fn convert_code_blocks_to_matrix(&self, text: &str) -> String {
+        self.code_block_regex
+            .replace_all(text, |caps: &regex::Captures| {
+                let lang = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+                let code = &caps[2];
+                if lang.is_empty() {
+                    format!("<pre><code>{}</code></pre>", code)
+                } else {
+                    format!("<pre><code class=\"language-{}\">{}</code></pre>", lang, code)
+                }
+            })
+            .to_string()
+    }
+
+    fn convert_inline_code_to_matrix(&self, text: &str) -> String {
+        self.inline_code_regex
+            .replace_all(text, |caps: &regex::Captures| {
+                format!("<code>{}</code>", &caps[1])
+            })
+            .to_string()
+    }
+
+    fn convert_code_blocks_to_html(&self, text: &str) -> String {
+        self.code_block_regex
+            .replace_all(text, |caps: &regex::Captures| {
+                let lang = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+                let code = &caps[2];
+                if lang.is_empty() {
+                    format!("<pre><code>{}</code></pre>", code)
+                } else {
+                    format!("<pre><code class=\"language-{}\">{}</code></pre>", lang, code)
+                }
+            })
+            .to_string()
+    }
+
+    fn convert_inline_code_to_html(&self, text: &str) -> String {
+        self.inline_code_regex
+            .replace_all(text, |caps: &regex::Captures| {
+                format!("<code>{}</code>", &caps[1])
+            })
+            .to_string()
+    }
+
+    fn convert_discord_formatting_to_html(&self, text: &str) -> String {
+        let mut result = text.to_string();
+        
+        result = self.bold_regex
+            .replace_all(&result, "<strong>$1</strong>")
+            .to_string();
+        
+        result = self.italic_regex
+            .replace_all(&result, "<em>$1</em>")
+            .to_string();
+        
+        result = self.underline_regex
+            .replace_all(&result, "<u>$1</u>")
+            .to_string();
+        
+        result = self.strikethrough_regex
+            .replace_all(&result, "<del>$1</del>")
+            .to_string();
+        
+        result = self.spoiler_regex
+            .replace_all(&result, "<span data-mx-spoiler>$1</span>")
+            .to_string();
+        
+        result
+    }
+
+    fn convert_mentions_to_matrix(&self, text: &str) -> String {
+        if self.domain.is_empty() {
+            return text.to_string();
+        }
+        self.mention_regex
+            .replace_all(text, |caps: &regex::Captures| {
+                let user_id = &caps[1];
+                format!("<a href=\"https://matrix.to/#/@_discord_{}:{}\">@_discord_{}</a>", 
+                    user_id, self.domain, user_id)
+            })
+            .to_string()
+    }
+
+    fn convert_mentions_to_html(&self, text: &str) -> String {
+        if self.domain.is_empty() {
+            return text.to_string();
+        }
+        self.mention_regex
+            .replace_all(text, |caps: &regex::Captures| {
+                let user_id = &caps[1];
+                format!("<a href=\"https://matrix.to/#/@_discord_{}:{}\">@_discord_{}</a>", 
+                    user_id, self.domain, user_id)
+            })
+            .to_string()
+    }
+
+    fn convert_channels_to_matrix(&self, text: &str) -> String {
+        if self.domain.is_empty() {
+            return text.to_string();
+        }
+        self.channel_regex
+            .replace_all(text, |caps: &regex::Captures| {
+                let channel_id = &caps[1];
+                format!("<a href=\"https://matrix.to/#/#_discord_{}:{}\">#_discord_{}</a>", 
+                    channel_id, self.domain, channel_id)
+            })
+            .to_string()
+    }
+
+    fn convert_channels_to_html(&self, text: &str) -> String {
+        if self.domain.is_empty() {
+            return text.to_string();
+        }
+        self.channel_regex
+            .replace_all(text, |caps: &regex::Captures| {
+                let channel_id = &caps[1];
+                format!("<a href=\"https://matrix.to/#/#_discord_{}:{}\">#_discord_{}</a>", 
+                    channel_id, self.domain, channel_id)
+            })
+            .to_string()
+    }
+
+    fn convert_roles_to_matrix(&self, text: &str) -> String {
+        if self.domain.is_empty() {
+            return text.to_string();
+        }
+        self.role_regex
+            .replace_all(text, |caps: &regex::Captures| {
+                let role_id = &caps[1];
+                format!("@role_{}", role_id)
+            })
+            .to_string()
+    }
+
+    fn convert_roles_to_html(&self, text: &str) -> String {
+        if self.domain.is_empty() {
+            return text.to_string();
+        }
+        self.role_regex
+            .replace_all(text, |caps: &regex::Captures| {
+                let role_id = &caps[1];
+                format!("<font color=\"#99AAB5\">@role_{}</font>", role_id)
+            })
+            .to_string()
+    }
+
+    fn convert_emojis_to_matrix(&self, text: &str) -> String {
+        self.emoji_regex
+            .replace_all(text, |caps: &regex::Captures| {
+                let emoji_name = &caps[1];
+                format!(":{}:", emoji_name)
+            })
+            .to_string()
+    }
+
+    fn convert_emojis_to_html(&self, text: &str) -> String {
+        self.emoji_regex
+            .replace_all(text, |caps: &regex::Captures| {
+                let emoji_name = &caps[1];
+                let emoji_id = &caps[2];
+                format!("<img data-mx-emoticon src=\"https://cdn.discordapp.com/emojis/{}.png\" alt=\":{}:\" title=\":{}:\" height=\"32\" width=\"32\" />", 
+                    emoji_id, emoji_name, emoji_name)
+            })
+            .to_string()
+    }
+
+    fn convert_everyone_here(&self, text: &str) -> String {
+        let mut result = text.to_string();
+        result = self.everyone_regex.replace_all(&result, "@everyone").to_string();
+        result = self.here_regex.replace_all(&result, "@here").to_string();
+        result
+    }
+
+    fn convert_everyone_here_to_html(&self, text: &str) -> String {
+        let mut result = text.to_string();
+        result = self.everyone_regex.replace_all(&result, "<font color=\"#FF0000\">@everyone</font>").to_string();
+        result = self.here_regex.replace_all(&result, "<font color=\"#FF0000\">@here</font>").to_string();
+        result
+    }
+
+    fn convert_newlines_to_html(&self, text: &str) -> String {
+        text.replace("\n", "<br/>")
     }
 
     pub async fn convert_message(
@@ -41,14 +300,295 @@ impl DiscordToMatrixConverter {
         discord_message: &str,
         matrix_room_id: &str,
     ) -> Result<BridgeMessage> {
+        let formatted = self.format_as_html(discord_message);
+        
         Ok(BridgeMessage {
             source_platform: "discord".to_string(),
             target_platform: "matrix".to_string(),
             source_id: format!("discord:{}", matrix_room_id),
             target_id: matrix_room_id.to_string(),
             content: self.format_for_matrix(discord_message),
+            formatted_content: Some(formatted),
             timestamp: Utc::now().to_rfc3339(),
             attachments: Vec::new(),
         })
+    }
+
+    pub fn to_matrix_content(&self, message: &BridgeMessage) -> Value {
+        if let Some(ref formatted) = message.formatted_content {
+            json!({
+                "msgtype": "m.text",
+                "body": message.content,
+                "format": "org.matrix.custom.html",
+                "formatted_body": formatted
+            })
+        } else {
+            json!({
+                "msgtype": "m.text",
+                "body": message.content
+            })
+        }
+    }
+
+    pub fn create_reply_content(&self, body: &str, reply_event_id: &str, reply_body: &str, reply_sender: &str) -> Value {
+        let formatted_reply = format!(
+            "<mx-reply><blockquote><a href=\"https://matrix.to/#/{}\">In reply to</a> <a href=\"https://matrix.to/#/{}\">{}</a><br/>{}</blockquote></mx-reply>{}",
+            reply_event_id, reply_sender, reply_sender, reply_body, body
+        );
+        
+        let plain_reply = format!("> <{}> {}\n\n{}", reply_sender, reply_body, body);
+        
+        json!({
+            "msgtype": "m.text",
+            "body": plain_reply,
+            "format": "org.matrix.custom.html",
+            "formatted_body": formatted_reply,
+            "m.relates_to": {
+                "m.in_reply_to": {
+                    "event_id": reply_event_id
+                }
+            }
+        })
+    }
+
+    pub fn create_edit_content(&self, new_body: &str, original_event_id: &str, new_formatted_body: Option<&str>) -> Value {
+        let new_content = if let Some(formatted) = new_formatted_body {
+            json!({
+                "msgtype": "m.text",
+                "body": new_body,
+                "format": "org.matrix.custom.html",
+                "formatted_body": formatted
+            })
+        } else {
+            json!({
+                "msgtype": "m.text",
+                "body": new_body
+            })
+        };
+
+        json!({
+            "msgtype": "m.text",
+            "body": format!("* {}", new_body),
+            "format": "org.matrix.custom.html",
+            "formatted_body": format!("* {}", new_formatted_body.unwrap_or(new_body)),
+            "m.new_content": new_content,
+            "m.relates_to": {
+                "rel_type": "m.replace",
+                "event_id": original_event_id
+            }
+        })
+    }
+
+    pub fn extract_emoji_info(&self, content: &str) -> Vec<EmojiMention> {
+        MessageUtils::extract_discord_emojis(content)
+    }
+
+    pub fn is_spoiler(&self, content: &str) -> bool {
+        self.spoiler_regex.is_match(content)
+    }
+
+    pub fn has_code_block(&self, content: &str) -> bool {
+        self.code_block_regex.is_match(content)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_converter() -> DiscordToMatrixConverter {
+        DiscordToMatrixConverter::new(Arc::new(
+            crate::discord::DiscordClient::new(std::sync::Arc::new(
+                crate::config::Config {
+                    bridge: crate::config::BridgeConfig {
+                        domain: "example.org".to_string(),
+                        port: 9005,
+                        bind_address: "127.0.0.1".to_string(),
+                        homeserver_url: "http://localhost:8008".to_string(),
+                        presence_interval: 500,
+                        disable_presence: false,
+                        disable_typing_notifications: false,
+                        disable_discord_mentions: false,
+                        disable_deletion_forwarding: false,
+                        enable_self_service_bridging: false,
+                        disable_portal_bridging: false,
+                        disable_read_receipts: false,
+                        disable_everyone_mention: false,
+                        disable_here_mention: false,
+                        disable_join_leave_notifications: false,
+                        disable_invite_notifications: false,
+                        disable_room_topic_notifications: false,
+                        determine_code_language: false,
+                        user_limit: None,
+                        admin_mxid: None,
+                        invalid_token_message: String::new(),
+                        user_activity: None,
+                    },
+                    registration: crate::config::RegistrationConfig::default(),
+                    auth: crate::config::AuthConfig {
+                        bot_token: "test".to_string(),
+                        client_id: None,
+                        client_secret: None,
+                        use_privileged_intents: false,
+                    },
+                    logging: crate::config::LoggingConfig {
+                        level: "info".to_string(),
+                        line_date_format: String::new(),
+                        format: "pretty".to_string(),
+                        file: None,
+                        files: vec![],
+                    },
+                    database: crate::config::DatabaseConfig {
+                        url: Some("sqlite://test.db".to_string()),
+                        conn_string: None,
+                        filename: None,
+                        user_store_path: None,
+                        room_store_path: None,
+                        max_connections: None,
+                        min_connections: None,
+                    },
+                    room: crate::config::RoomConfig {
+                        default_visibility: "private".to_string(),
+                        room_alias_prefix: "_discord".to_string(),
+                        enable_room_creation: true,
+                        kick_for: 0,
+                    },
+                    channel: crate::config::ChannelConfig {
+                        enable_channel_creation: false,
+                        channel_name_format: String::new(),
+                        name_pattern: String::new(),
+                        topic_format: String::new(),
+                        delete_options: crate::config::ChannelDeleteOptionsConfig::default(),
+                        enable_webhook: true,
+                        webhook_name: "_matrix".to_string(),
+                        webhook_avatar: String::new(),
+                    },
+                    limits: crate::config::LimitsConfig::default(),
+                    ghosts: crate::config::GhostsConfig {
+                        nick_pattern: String::new(),
+                        username_pattern: String::new(),
+                        username_template: String::new(),
+                        displayname_template: String::new(),
+                        avatar_url_template: None,
+                    },
+                    metrics: crate::config::MetricsConfig::default(),
+                },
+            ))
+            .await
+            .unwrap(),
+        ))
+        .with_domain("example.org".to_string())
+    }
+
+    #[test]
+    fn converts_user_mention_to_matrix() {
+        let converter = make_converter();
+        let result = converter.format_for_matrix("Hello <@123456789>!");
+        assert!(result.contains("@_discord_123456789:example.org"));
+    }
+
+    #[test]
+    fn converts_user_mention_with_nickname_to_matrix() {
+        let converter = make_converter();
+        let result = converter.format_for_matrix("Hello <@!123456789>!");
+        assert!(result.contains("@_discord_123456789:example.org"));
+    }
+
+    #[test]
+    fn converts_channel_mention_to_matrix() {
+        let converter = make_converter();
+        let result = converter.format_for_matrix("Check out <#987654321>");
+        assert!(result.contains("#_discord_987654321:example.org"));
+    }
+
+    #[test]
+    fn converts_custom_emoji_to_text() {
+        let converter = make_converter();
+        let result = converter.format_for_matrix("Nice! <:cool:12345>");
+        assert_eq!(result, "Nice! :cool:");
+    }
+
+    #[test]
+    fn converts_animated_emoji_to_text() {
+        let converter = make_converter();
+        let result = converter.format_for_matrix("Wow! <a:dance:67890>");
+        assert_eq!(result, "Wow! :dance:");
+    }
+
+    #[test]
+    fn converts_bold_to_html() {
+        let converter = make_converter();
+        let result = converter.format_as_html("**bold text**");
+        assert!(result.contains("<strong>bold text</strong>"));
+    }
+
+    #[test]
+    fn converts_italic_to_html() {
+        let converter = make_converter();
+        let result = converter.format_as_html("*italic text*");
+        assert!(result.contains("<em>italic text</em>"));
+    }
+
+    #[test]
+    fn converts_strikethrough_to_html() {
+        let converter = make_converter();
+        let result = converter.format_as_html("~~strikethrough~~");
+        assert!(result.contains("<del>strikethrough</del>"));
+    }
+
+    #[test]
+    fn converts_code_block_to_html() {
+        let converter = make_converter();
+        let result = converter.format_as_html("```rust\nlet x = 1;\n```");
+        assert!(result.contains("<pre>"));
+        assert!(result.contains("language-rust"));
+    }
+
+    #[test]
+    fn converts_inline_code_to_html() {
+        let converter = make_converter();
+        let result = converter.format_as_html("`inline code`");
+        assert!(result.contains("<code>inline code</code>"));
+    }
+
+    #[test]
+    fn creates_matrix_content_with_formatting() {
+        let converter = make_converter();
+        let msg = BridgeMessage {
+            source_platform: "discord".to_string(),
+            target_platform: "matrix".to_string(),
+            source_id: "test".to_string(),
+            target_id: "room".to_string(),
+            content: "plain text".to_string(),
+            formatted_content: Some("<b>formatted</b>".to_string()),
+            timestamp: "now".to_string(),
+            attachments: vec![],
+        };
+        let content = converter.to_matrix_content(&msg);
+        assert_eq!(content["format"], "org.matrix.custom.html");
+        assert_eq!(content["formatted_body"], "<b>formatted</b>");
+    }
+
+    #[test]
+    fn creates_edit_content() {
+        let converter = make_converter();
+        let content = converter.create_edit_content("new message", "$event123", None);
+        assert_eq!(content["m.relates_to"]["rel_type"], "m.replace");
+        assert_eq!(content["m.relates_to"]["event_id"], "$event123");
+        assert_eq!(content["m.new_content"]["body"], "new message");
+    }
+
+    #[test]
+    fn detects_spoiler() {
+        let converter = make_converter();
+        assert!(converter.is_spoiler("This is ||spoiler|| text"));
+        assert!(!converter.is_spoiler("Normal text"));
+    }
+
+    #[test]
+    fn detects_code_block() {
+        let converter = make_converter();
+        assert!(converter.has_code_block("Here is code:\n```rust\ncode\n```"));
+        assert!(!converter.has_code_block("No code here"));
     }
 }

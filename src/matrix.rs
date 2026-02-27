@@ -8,7 +8,7 @@ use matrix_bot_sdk::{
 };
 use serde_json::{Value, json};
 use tokio::sync::RwLock;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use url::Url;
 
 use crate::config::Config;
@@ -543,6 +543,39 @@ impl MatrixAppservice {
         Ok(members.into_iter().map(|m| m.user_id).collect())
     }
 
+    pub async fn send_read_receipt(&self, room_id: &str, event_id: &str, user_id: &str) -> Result<()> {
+        let ghost_client = self.appservice.client.clone();
+        ghost_client
+            .impersonate_user_id(Some(user_id), None::<&str>)
+            .await;
+
+        let url = format!(
+            "{}/_matrix/client/v3/rooms/{}/receipt/m.read/{}",
+            self.config.bridge.homeserver_url.trim_end_matches('/'),
+            urlencoding::encode(room_id),
+            urlencoding::encode(event_id)
+        );
+
+        debug!("sending read receipt for user={} room={} event={}", user_id, room_id, event_id);
+
+        let client = reqwest::Client::new();
+        let response = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.config.registration.appservice_token))
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to send read receipt: {}", e))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            warn!("failed to send read receipt: {} - {}", status, body);
+        }
+
+        Ok(())
+    }
+
     pub async fn create_dm_room(&self, invite_user: &str) -> Result<String> {
         use matrix_bot_sdk::models::CreateRoom;
         let options = CreateRoom {
@@ -553,6 +586,65 @@ impl MatrixAppservice {
         };
         let room_id = self.appservice.client.create_room(&options).await?;
         Ok(room_id)
+    }
+
+    pub async fn invite_user_to_room(&self, room_id: &str, user_id: &str) -> Result<()> {
+        let url = format!(
+            "{}/_matrix/client/v3/rooms/{}/invite",
+            self.config.bridge.homeserver_url.trim_end_matches('/'),
+            urlencoding::encode(room_id)
+        );
+
+        debug!("inviting user {} to room {}", user_id, room_id);
+
+        let client = reqwest::Client::new();
+        let response = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.config.registration.appservice_token))
+            .json(&serde_json::json!({
+                "user_id": user_id
+            }))
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to invite user to room: {}", e))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            warn!("failed to invite user to room: {} - {}", status, body);
+        }
+
+        Ok(())
+    }
+
+    pub async fn kick_user_from_room(&self, room_id: &str, user_id: &str, reason: Option<&str>) -> Result<()> {
+        let url = format!(
+            "{}/_matrix/client/v3/rooms/{}/kick",
+            self.config.bridge.homeserver_url.trim_end_matches('/'),
+            urlencoding::encode(room_id)
+        );
+
+        debug!("kicking user {} from room {}", user_id, room_id);
+
+        let client = reqwest::Client::new();
+        let response = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.config.registration.appservice_token))
+            .json(&serde_json::json!({
+                "user_id": user_id,
+                "reason": reason.unwrap_or("")
+            }))
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to kick user from room: {}", e))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            warn!("failed to kick user from room: {} - {}", status, body);
+        }
+
+        Ok(())
     }
 
     pub fn registration_preview(&self) -> Value {

@@ -433,6 +433,25 @@ impl super::MessageStore for PostgresMessageStore {
         .await
     }
 
+    async fn get_by_matrix_event_id(
+        &self,
+        matrix_event_id_param: &str,
+    ) -> Result<Option<MessageMapping>, DatabaseError> {
+        let pool = self.pool.clone();
+        let matrix_event_id_param = matrix_event_id_param.to_string();
+        with_connection(pool, move |conn| {
+            use crate::db::schema::message_mappings::dsl::*;
+            message_mappings
+                .filter(matrix_event_id.eq(matrix_event_id_param))
+                .select(DbMessageMapping::as_select())
+                .first::<DbMessageMapping>(conn)
+                .optional()
+                .map(|value| value.map(Into::into))
+                .map_err(|e| DatabaseError::Query(e.to_string()))
+        })
+        .await
+    }
+
     async fn upsert_message_mapping(&self, mapping: &MessageMapping) -> Result<(), DatabaseError> {
         let pool = self.pool.clone();
         let mapping = mapping.clone();

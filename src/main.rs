@@ -14,6 +14,7 @@ mod cli;
 mod config;
 mod db;
 mod discord;
+mod emoji;
 mod matrix;
 mod media;
 mod parsers;

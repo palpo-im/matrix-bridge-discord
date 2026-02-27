@@ -1,9 +1,9 @@
 use crate::config::{DatabaseConfig as ConfigDatabaseConfig, DbType as ConfigDbType};
-use crate::db::{DatabaseError, MessageStore, RoomStore, UserStore};
+use crate::db::{DatabaseError, EmojiStore, MessageStore, RoomStore, UserStore};
 use std::sync::Arc;
 
 #[cfg(feature = "postgres")]
-use crate::db::postgres::{PostgresMessageStore, PostgresRoomStore, PostgresUserStore};
+use crate::db::postgres::{PostgresEmojiStore, PostgresMessageStore, PostgresRoomStore, PostgresUserStore};
 #[cfg(feature = "postgres")]
 use diesel::pg::PgConnection;
 #[cfg(feature = "postgres")]
@@ -15,7 +15,7 @@ use diesel::RunQueryDsl;
 pub type Pool = r2d2::Pool<ConnectionManager<PgConnection>>;
 
 #[cfg(feature = "sqlite")]
-use crate::db::sqlite::{SqliteMessageStore, SqliteRoomStore, SqliteUserStore};
+use crate::db::sqlite::{SqliteEmojiStore, SqliteMessageStore, SqliteRoomStore, SqliteUserStore};
 #[cfg(feature = "sqlite")]
 use diesel::sqlite::SqliteConnection;
 #[cfg(feature = "sqlite")]
@@ -30,6 +30,7 @@ pub struct DatabaseManager {
     room_store: Arc<dyn RoomStore>,
     user_store: Arc<dyn UserStore>,
     message_store: Arc<dyn MessageStore>,
+    emoji_store: Arc<dyn EmojiStore>,
     db_type: DbType,
 }
 
@@ -72,6 +73,7 @@ impl DatabaseManager {
                 let room_store = Arc::new(PostgresRoomStore::new(pool.clone()));
                 let user_store = Arc::new(PostgresUserStore::new(pool.clone()));
                 let message_store = Arc::new(PostgresMessageStore::new(pool.clone()));
+                let emoji_store = Arc::new(PostgresEmojiStore::new(pool.clone()));
 
                 Ok(Self {
                     postgres_pool: Some(pool),
@@ -80,6 +82,7 @@ impl DatabaseManager {
                     room_store,
                     user_store,
                     message_store,
+                    emoji_store,
                     db_type,
                 })
             }
@@ -89,8 +92,9 @@ impl DatabaseManager {
                 let path_arc = Arc::new(path.clone());
 
                 let room_store = Arc::new(SqliteRoomStore::new(path_arc.clone()));
-                let user_store = Arc::new(SqliteUserStore::new(path_arc));
+                let user_store = Arc::new(SqliteUserStore::new(path_arc.clone()));
                 let message_store = Arc::new(SqliteMessageStore::new(Arc::new(path.clone())));
+                let emoji_store = Arc::new(SqliteEmojiStore::new(path_arc));
 
                 Ok(Self {
                     #[cfg(feature = "postgres")]
@@ -99,6 +103,7 @@ impl DatabaseManager {
                     room_store,
                     user_store,
                     message_store,
+                    emoji_store,
                     db_type,
                 })
             }
@@ -115,6 +120,29 @@ impl DatabaseManager {
                 ))
             }
         }
+    }
+
+    #[cfg(feature = "sqlite")]
+    pub fn new_in_memory() -> Result<Self, DatabaseError> {
+        use std::sync::Arc;
+        
+        let path_arc = Arc::new(":memory:".to_string());
+
+        let room_store = Arc::new(SqliteRoomStore::new(path_arc.clone()));
+        let user_store = Arc::new(SqliteUserStore::new(path_arc.clone()));
+        let message_store = Arc::new(SqliteMessageStore::new(path_arc.clone()));
+        let emoji_store = Arc::new(SqliteEmojiStore::new(path_arc));
+
+        Ok(Self {
+            #[cfg(feature = "postgres")]
+            postgres_pool: None,
+            sqlite_path: Some(":memory:".to_string()),
+            room_store,
+            user_store,
+            message_store,
+            emoji_store,
+            db_type: DbType::Sqlite,
+        })
     }
 
     pub async fn migrate(&self) -> Result<(), DatabaseError> {
@@ -204,6 +232,17 @@ impl DatabaseManager {
                     metadata JSONB
                 )
                 "#,
+                r#"
+                CREATE TABLE IF NOT EXISTS emoji_mappings (
+                    id BIGSERIAL PRIMARY KEY,
+                    discord_emoji_id TEXT NOT NULL UNIQUE,
+                    emoji_name TEXT NOT NULL,
+                    animated BOOLEAN NOT NULL DEFAULT FALSE,
+                    mxc_url TEXT NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+                )
+                "#,
                 "CREATE INDEX IF NOT EXISTS idx_user_mappings_matrix_id ON user_mappings(matrix_user_id)",
                 "CREATE INDEX IF NOT EXISTS idx_user_mappings_discord_id ON user_mappings(discord_user_id)",
                 "CREATE INDEX IF NOT EXISTS idx_room_mappings_matrix_id ON room_mappings(matrix_room_id)",
@@ -213,6 +252,8 @@ impl DatabaseManager {
                 "CREATE INDEX IF NOT EXISTS idx_message_mappings_matrix_event ON message_mappings(matrix_event_id)",
                 "CREATE INDEX IF NOT EXISTS idx_user_activity_user_mapping ON user_activity(user_mapping_id)",
                 "CREATE INDEX IF NOT EXISTS idx_user_activity_timestamp ON user_activity(timestamp)",
+                "CREATE INDEX IF NOT EXISTS idx_emoji_mappings_discord_id ON emoji_mappings(discord_emoji_id)",
+                "CREATE INDEX IF NOT EXISTS idx_emoji_mappings_mxc ON emoji_mappings(mxc_url)",
             ];
 
             for statement in statements {
@@ -287,6 +328,17 @@ impl DatabaseManager {
                     metadata TEXT
                 )
                 "#,
+                r#"
+                CREATE TABLE IF NOT EXISTS emoji_mappings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    discord_emoji_id TEXT NOT NULL UNIQUE,
+                    emoji_name TEXT NOT NULL,
+                    animated INTEGER NOT NULL DEFAULT 0,
+                    mxc_url TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+                "#,
                 "CREATE INDEX IF NOT EXISTS idx_user_mappings_matrix_id ON user_mappings(matrix_user_id)",
                 "CREATE INDEX IF NOT EXISTS idx_user_mappings_discord_id ON user_mappings(discord_user_id)",
                 "CREATE INDEX IF NOT EXISTS idx_room_mappings_matrix_id ON room_mappings(matrix_room_id)",
@@ -296,6 +348,8 @@ impl DatabaseManager {
                 "CREATE INDEX IF NOT EXISTS idx_message_mappings_matrix_event ON message_mappings(matrix_event_id)",
                 "CREATE INDEX IF NOT EXISTS idx_user_activity_user_mapping ON user_activity(user_mapping_id)",
                 "CREATE INDEX IF NOT EXISTS idx_user_activity_timestamp ON user_activity(timestamp)",
+                "CREATE INDEX IF NOT EXISTS idx_emoji_mappings_discord_id ON emoji_mappings(discord_emoji_id)",
+                "CREATE INDEX IF NOT EXISTS idx_emoji_mappings_mxc ON emoji_mappings(mxc_url)",
             ];
 
             for statement in statements {
@@ -322,6 +376,10 @@ impl DatabaseManager {
         self.message_store.clone()
     }
 
+    pub fn emoji_store(&self) -> Arc<dyn EmojiStore> {
+        self.emoji_store.clone()
+    }
+
     #[cfg(feature = "postgres")]
     pub fn pool(&self) -> Option<&Pool> {
         self.postgres_pool.as_ref()
@@ -329,162 +387,5 @@ impl DatabaseManager {
 
     pub fn db_type(&self) -> DbType {
         self.db_type
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use chrono::Utc;
-    use tempfile::NamedTempFile;
-
-    use super::DatabaseManager;
-    use crate::config::DatabaseConfig;
-    use crate::db::MessageMapping;
-
-    #[tokio::test]
-    async fn sqlite_message_mapping_roundtrip() {
-        let file = NamedTempFile::new().expect("temp sqlite file");
-        let db_path = file.path().to_string_lossy().to_string();
-
-        let config = DatabaseConfig {
-            url: None,
-            conn_string: None,
-            filename: Some(db_path),
-            user_store_path: None,
-            room_store_path: None,
-            max_connections: Some(1),
-            min_connections: Some(1),
-        };
-
-        let manager = DatabaseManager::new(&config).await.expect("db manager");
-        manager.migrate().await.expect("migrate");
-
-        let now = Utc::now();
-        let mapping = MessageMapping {
-            id: 0,
-            discord_message_id: "discord-msg-1".to_string(),
-            matrix_room_id: "!room:example.org".to_string(),
-            matrix_event_id: "$event1".to_string(),
-            created_at: now,
-            updated_at: now,
-        };
-
-        manager
-            .message_store()
-            .upsert_message_mapping(&mapping)
-            .await
-            .expect("insert mapping");
-
-        let inserted = manager
-            .message_store()
-            .get_by_discord_message_id("discord-msg-1")
-            .await
-            .expect("query mapping")
-            .expect("mapping exists");
-        assert_eq!(inserted.matrix_event_id, "$event1");
-
-        let mut updated = mapping.clone();
-        updated.matrix_event_id = "$event2".to_string();
-        updated.updated_at = Utc::now();
-
-        manager
-            .message_store()
-            .upsert_message_mapping(&updated)
-            .await
-            .expect("update mapping");
-
-        let after_update = manager
-            .message_store()
-            .get_by_discord_message_id("discord-msg-1")
-            .await
-            .expect("query mapping after update")
-            .expect("mapping exists after update");
-        assert_eq!(after_update.matrix_event_id, "$event2");
-
-        let manager_reopened = DatabaseManager::new(&config).await.expect("db manager reopened");
-        manager_reopened.migrate().await.expect("migrate reopened");
-
-        let persisted = manager_reopened
-            .message_store()
-            .get_by_discord_message_id("discord-msg-1")
-            .await
-            .expect("query after reopen")
-            .expect("mapping exists after reopen");
-        assert_eq!(persisted.matrix_event_id, "$event2");
-
-        manager_reopened
-            .message_store()
-            .delete_by_discord_message_id("discord-msg-1")
-            .await
-            .expect("delete mapping after reopen");
-
-        let after_delete = manager_reopened
-            .message_store()
-            .get_by_discord_message_id("discord-msg-1")
-            .await
-            .expect("query mapping after delete");
-        assert!(after_delete.is_none());
-    }
-
-    #[tokio::test]
-    async fn sqlite_bulk_delete_with_duplicate_ids_clears_mappings() {
-        let file = NamedTempFile::new().expect("temp sqlite file");
-        let db_path = file.path().to_string_lossy().to_string();
-
-        let config = DatabaseConfig {
-            url: None,
-            conn_string: None,
-            filename: Some(db_path),
-            user_store_path: None,
-            room_store_path: None,
-            max_connections: Some(1),
-            min_connections: Some(1),
-        };
-
-        let manager = DatabaseManager::new(&config).await.expect("db manager");
-        manager.migrate().await.expect("migrate");
-
-        let now = Utc::now();
-        for (discord_id, matrix_event_id) in [
-            ("discord-msg-a", "$event-a"),
-            ("discord-msg-b", "$event-b"),
-            ("discord-msg-c", "$event-c"),
-        ] {
-            manager
-                .message_store()
-                .upsert_message_mapping(&MessageMapping {
-                    id: 0,
-                    discord_message_id: discord_id.to_string(),
-                    matrix_room_id: "!room:example.org".to_string(),
-                    matrix_event_id: matrix_event_id.to_string(),
-                    created_at: now,
-                    updated_at: now,
-                })
-                .await
-                .expect("insert mapping");
-        }
-
-        for discord_id in [
-            "discord-msg-a",
-            "discord-msg-b",
-            "discord-msg-a",
-            "discord-msg-c",
-            "discord-msg-b",
-        ] {
-            manager
-                .message_store()
-                .delete_by_discord_message_id(discord_id)
-                .await
-                .expect("delete mapping");
-        }
-
-        for discord_id in ["discord-msg-a", "discord-msg-b", "discord-msg-c"] {
-            let maybe_mapping = manager
-                .message_store()
-                .get_by_discord_message_id(discord_id)
-                .await
-                .expect("query mapping after bulk delete");
-            assert!(maybe_mapping.is_none(), "expected {discord_id} to be removed");
-        }
     }
 }

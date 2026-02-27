@@ -1,0 +1,274 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use anyhow::Result;
+use chrono::Utc;
+use tracing::{debug, info, warn};
+
+use crate::db::{DatabaseManager, UserMapping};
+use crate::matrix::MatrixAppservice;
+use crate::config::Config;
+
+pub struct UserSyncHandler {
+    db: Arc<DatabaseManager>,
+    matrix: Arc<MatrixAppservice>,
+    config: Arc<Config>,
+}
+
+impl UserSyncHandler {
+    pub fn new(db: Arc<DatabaseManager>, matrix: Arc<MatrixAppservice>, config: Arc<Config>) -> Self {
+        Self { db, matrix, config }
+    }
+
+struct DisplaynameCacheEntry {
+    displayname: String,
+    timestamp: i64,
+}
+
+impl UserSyncHandler {
+    pub fn new(db: Arc<DatabaseManager>, matrix: Arc<MatrixAppservice>, config: Arc<Config>) -> Self {
+        Self {
+            db,
+            matrix,
+            config,
+            avatar_cache: HashMap::new(),
+            displayname_cache: HashMap::new(),
+        }
+    }
+
+    pub async fn on_user_update(
+        &self,
+        discord_user_id: &str,
+        discord_username: Option<&str>,
+        discord_avatar_url: Option<&str>,
+        is_webhook: bool,
+    ) -> Result<()> {
+        let user_state = self.get_user_update_state(
+            discord_user_id,
+            discord_username,
+            discord_avatar_url,
+            is_webhook,
+        ).await?;
+
+        if user_state.create_user {
+            info!("Creating new ghost user for Discord user {}", discord_user_id);
+        }
+
+        self.apply_state_to_profile(&user_state).await?;
+
+        if user_state.displayname.is_some() || user_state.avatar_url.is_some() {
+            self.update_state_for_guilds(&user_state).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn get_user_update_state(
+        &self,
+        discord_user_id: &str,
+        discord_username: Option<&str>,
+        discord_avatar_url: Option<&str>,
+        is_webhook: bool,
+    ) -> Result<UserState> {
+        let mxid_extra = if is_webhook {
+            format!("_{}", self.sanitize_for_mxid(discord_username.unwrap_or("unknown")))
+        } else {
+            String::new()
+        };
+
+        let displayname = discord_username.map(|name| {
+            crate::utils::formatting::apply_pattern_string(
+                &self.config.ghosts.username_pattern,
+                &[
+                    ("id", discord_user_id),
+                    ("tag", "0000"),
+                    ("username", name),
+                ],
+            )
+        });
+
+        let existing = self.db.user_store().get_user_by_discord_id(&format!("{}{}", discord_user_id, mxid_extra)).await?;
+
+        let user_state = if existing.is_none() {
+            UserState {
+                id: format!("{}{}", discord_user_id, mxid_extra),
+                mx_user_id: format!("@_discord_{}{}:{}", discord_user_id, mxid_extra, self.config.bridge.domain),
+                create_user: true,
+                displayname: displayname.clone(),
+                avatar_url: discord_avatar_url.map(ToOwned::to_owned),
+                remove_avatar: false,
+            }
+        } else {
+            let existing = existing.unwrap();
+            UserState {
+                id: format!("{}{}", discord_user_id, mxid_extra),
+                mx_user_id: existing.matrix_user_id.clone(),
+                create_user: false,
+                displayname: if displayname.as_ref() != Some(&existing.discord_username) {
+                    displayname.clone()
+                } else {
+                    None
+                },
+                avatar_url: if discord_avatar_url.as_ref() != existing.discord_avatar.as_deref() {
+                    discord_avatar_url.map(ToOwned::to_owned)
+                } else {
+                    None
+                },
+                remove_avatar: discord_avatar_url.is_none() && existing.discord_avatar.is_some(),
+            }
+        };
+
+        Ok(user_state)
+    }
+
+    async fn apply_state_to_profile(&self, state: &UserState) -> Result<()> {
+        let mapping = UserMapping {
+            id: 0,
+            matrix_user_id: state.mx_user_id.clone(),
+            discord_user_id: state.id.clone(),
+            discord_username: state.displayname.clone().unwrap_or_default(),
+            discord_discriminator: "0000".to_string(),
+            discord_avatar: state.avatar_url.clone(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        if state.create_user {
+            self.db.user_store().create_user_mapping(&mapping).await?;
+            info!("Created user mapping for Discord user {}", state.id);
+        } else {
+            self.db.user_store().update_user_mapping(&mapping).await?;
+            debug!("Updated user mapping for Discord user {}", state.id);
+        }
+
+        self.matrix.ensure_ghost_user_registered(&state.id, state.displayname.as_deref()).await?;
+
+        if let Some(ref displayname) = &state.displayname {
+            debug!("Setting displayname for {} to {}", state.mx_user_id, displayname);
+            if let Err(e) = self.matrix.set_ghost_displayname(&state.id, displayname).await {
+                warn!("Failed to set displayname for {}: {}", state.mx_user_id, e);
+            }
+        }
+
+        if let Some(ref avatar_url) = &state.avatar_url {
+            debug!("Setting avatar for {} from {}", state.mx_user_id, avatar_url);
+            match self.upload_avatar_to_matrix(&state.id, avatar_url).await {
+                Ok(mxc_url) => {
+                    if let Err(e) = self.matrix.set_ghost_avatar(&state.id, &mxc_url).await {
+                        warn!("Failed to set avatar for {}: {}", state.mx_user_id, e);
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to upload avatar for {}: {}", state.mx_user_id, e);
+                }
+            }
+        }
+
+        if state.remove_avatar {
+            debug!("Removing avatar for {}", state.mx_user_id);
+            if let Err(e) = self.matrix.set_ghost_avatar(&state.id, "").await {
+                warn!("Failed to remove avatar for {}: {}", state.mx_user_id, e);
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn upload_avatar_to_matrix(&self, discord_user_id: &str, avatar_url: &str) -> Result<String> {
+        use crate::media::MediaHandler;
+        
+        let media_handler = MediaHandler::new(&self.config.bridge.homeserver_url);
+        let media = media_handler.download_from_url(avatar_url).await?;
+        
+        let content_type = media.content_type.clone();
+        let filename = media.filename.clone();
+        
+        let mxc_url = self.matrix.upload_media_for_ghost(discord_user_id, &media.data, &content_type, &filename).await?;
+        
+        info!("Uploaded avatar for {} to {}", discord_user_id, mxc_url);
+        Ok(mxc_url)
+    }
+
+    async fn update_state_for_guilds(&self, state: &UserState) -> Result<()> {
+        let room_mappings = self.db.room_store().list_room_mappings(i64::MAX, 0).await?;
+        
+        if room_mappings.is_empty() {
+            debug!("No rooms to update user state for");
+            return Ok(());
+        }
+
+        let mut guild_rooms: HashMap<String, Vec<String>> = HashMap::new();
+        for mapping in room_mappings {
+            guild_rooms
+                .entry(mapping.discord_guild_id.clone())
+                .or_default_with(Vec::new)
+                .push(mapping.matrix_room_id);
+        }
+
+        for (_guild_id, room_ids) in guild_rooms {
+            for room_id in room_ids {
+                if let Err(e) = self.apply_state_to_room(state, &room_id).await {
+                    warn!("Failed to update user state in room {}: {}", room_id, e);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn apply_state_to_room(&self, state: &UserState, room_id: &str) -> Result<()> {
+        debug!("Applying member state for {} in room {}", state.mx_user_id, room_id);
+        
+        if let Some(displayname) = &state.displayname {
+            self.matrix.set_ghost_room_displayname(&state.id, room_id, displayname).await?;
+        }
+
+        if let Some(avatar_mxc) = &state.avatar_url {
+            self.matrix.set_ghost_room_avatar(&state.id, room_id, avatar_mxc).await?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn ensure_user_in_room(&self, discord_user_id: &str, room_id: &str) -> Result<()> {
+        let ghost_user_id = format!("@_discord_{}:{}", discord_user_id, self.config.bridge.domain);
+        
+        self.matrix.ensure_ghost_user_registered(discord_user_id, None).await?;
+        self.matrix.invite_ghost_to_room(discord_user_id, room_id).await?;
+        
+        Ok(())
+    }
+
+    pub async fn remove_user_from_room(&self, discord_user_id: &str, room_id: &str) -> Result<()> {
+        let ghost_user_id = format!("@_discord_{}:{}", discord_user_id, self.config.bridge.domain);
+        
+        self.matrix.kick_ghost_from_room(discord_user_id, room_id).await?;
+        
+        Ok(())
+    }
+
+    fn sanitize_for_mxid(&self, input: &str) -> String {
+        let mut result = String::new();
+        for c in input.chars() {
+            match c {
+                'a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '-' | '.' | '=' | '/' | '+' => {
+                    result.push(c);
+                }
+                _ => {
+                    result.push('_');
+                }
+            }
+        }
+        result
+    }
+}
+
+#[derive(Debug)]
+struct UserState {
+    id: String,
+    mx_user_id: String,
+    create_user: bool,
+    displayname: Option<String>,
+    avatar_url: Option<String>,
+    remove_avatar: bool,
+}

@@ -471,6 +471,28 @@ impl super::MessageStore for SqliteMessageStore {
         .map_err(|e| DatabaseError::Query(format!("database task failed: {e}")))?
     }
 
+    async fn get_by_matrix_event_id(
+        &self,
+        matrix_event_id_param: &str,
+    ) -> Result<Option<MessageMapping>, DatabaseError> {
+        let matrix_event_id_param = matrix_event_id_param.to_string();
+        let db_path = self.db_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = establish_connection(&db_path)?;
+            use crate::db::schema_sqlite::message_mappings::dsl::*;
+            message_mappings
+                .filter(matrix_event_id.eq(matrix_event_id_param))
+                .select(DbMessageMapping::as_select())
+                .first::<DbMessageMapping>(&mut conn)
+                .optional()
+                .map_err(|e| DatabaseError::Query(e.to_string()))?
+                .map(|m| m.to_message_mapping())
+                .transpose()
+        })
+        .await
+        .map_err(|e| DatabaseError::Query(format!("database task failed: {e}")))?
+    }
+
     async fn upsert_message_mapping(&self, mapping: &MessageMapping) -> Result<(), DatabaseError> {
         let mapping = mapping.clone();
         let db_path = self.db_path.clone();

@@ -2163,6 +2163,7 @@ dependencies = [
  "metrics-exporter-prometheus",
  "once_cell",
  "parking_lot",
+ "regex",
  "reqwest 0.13.2",
  "salvo",
  "secrecy",
