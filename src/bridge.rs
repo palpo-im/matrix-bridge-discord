@@ -648,6 +648,12 @@ impl BridgeCore {
                     }
                     return Ok(());
                 }
+                if membership == "invite" {
+                    debug!(
+                        "matrix invite ignored room_id={} state_key={:?} expected_bot={} sender={}",
+                        event.room_id, event.state_key, bot_user_id, event.sender
+                    );
+                }
 
                 if self.matrix_client.is_namespaced_user(&event.sender) {
                     debug!(

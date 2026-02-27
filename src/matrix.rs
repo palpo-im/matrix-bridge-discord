@@ -172,7 +172,10 @@ impl MatrixAppservice {
     }
 
     pub fn bot_user_id(&self) -> String {
-        format!("@_discord_:{}", self.config.bridge.domain)
+        format!(
+            "@{}:{}",
+            self.config.registration.sender_localpart, self.config.bridge.domain
+        )
     }
 
     pub fn is_namespaced_user(&self, user_id: &str) -> bool {
@@ -851,7 +854,7 @@ impl MatrixAppservice {
             "url": format!("http://{}:{}", self.config.bridge.bind_address, self.config.bridge.port),
             "as_token": self.config.registration.appservice_token,
             "hs_token": self.config.registration.homeserver_token,
-            "sender_localpart": "_discord_",
+            "sender_localpart": self.config.registration.sender_localpart,
             "rate_limited": false,
             "namespaces": {
                 "users": [{

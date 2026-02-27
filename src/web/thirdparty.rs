@@ -56,7 +56,7 @@ fn render_error(res: &mut Response, status: StatusCode, message: &str) {
     res.render(Json(json!({ "error": message })));
 }
 
-fn protocol_payload(domain: &str) -> ThirdPartyProtocol {
+fn protocol_payload(bot_user_id: &str) -> ThirdPartyProtocol {
     let mut field_types = HashMap::new();
     field_types.insert(
         "guild_id".to_string(),
@@ -86,7 +86,7 @@ fn protocol_payload(domain: &str) -> ThirdPartyProtocol {
         field_types,
         instances: vec![ThirdPartyInstance {
             network_id: "discord".to_string(),
-            bot_user_id: format!("@_discord_bot:{}", domain),
+            bot_user_id: bot_user_id.to_string(),
             desc: "Discord".to_string(),
             icon: None,
             fields: HashMap::new(),
@@ -96,8 +96,9 @@ fn protocol_payload(domain: &str) -> ThirdPartyProtocol {
 
 #[handler]
 pub async fn get_protocol(res: &mut Response) {
-    let domain = &web_state().matrix_client.config().bridge.domain;
-    res.render(Json(protocol_payload(domain)));
+    let matrix_client = &web_state().matrix_client;
+    let bot_user_id = matrix_client.bot_user_id();
+    res.render(Json(protocol_payload(&bot_user_id)));
 }
 
 #[handler]
@@ -215,7 +216,7 @@ mod tests {
 
     #[test]
     fn protocol_payload_contains_expected_fields() {
-        let payload = protocol_payload("example.org");
+        let payload = protocol_payload("@_discord_bot:example.org");
         assert!(!payload.user_fields.is_empty());
         assert!(!payload.location_fields.is_empty());
         assert_eq!(payload.instances[0].network_id, "discord");
