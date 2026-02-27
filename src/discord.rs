@@ -1059,11 +1059,34 @@ impl DiscordClient {
     }
 
     pub async fn get_user(&self, user_id: &str) -> Result<Option<DiscordUser>> {
+        let user_id_num: u64 = user_id
+            .parse()
+            .map_err(|_| anyhow!("invalid user id: {}", user_id))?;
+
+        let http_guard = self.http.read().await;
+        let Some(http) = http_guard.as_ref() else {
+            return Err(anyhow!("discord http client not available"));
+        };
+
+        let user = match UserId::new(user_id_num).to_user(http).await {
+            Ok(user) => user,
+            Err(err) => {
+                warn!("failed to fetch discord user {}: {}", user_id, err);
+                return Ok(None);
+            }
+        };
+
+        let discriminator = user
+            .discriminator
+            .map(|value| format!("{:04}", value.get()))
+            .unwrap_or_else(|| "0000".to_string());
+        let username = user.global_name.clone().unwrap_or_else(|| user.name.clone());
+
         Ok(Some(DiscordUser {
-            id: user_id.to_string(),
-            username: format!("user_{}", user_id),
-            discriminator: "0001".to_string(),
-            avatar: None,
+            id: user.id.to_string(),
+            username,
+            discriminator,
+            avatar: user.avatar_url(),
         }))
     }
 
@@ -1127,11 +1150,36 @@ impl DiscordClient {
     }
 
     pub async fn get_channel(&self, channel_id: &str) -> Result<Option<DiscordChannel>> {
+        let channel_id_num: u64 = channel_id
+            .parse()
+            .map_err(|_| anyhow!("invalid channel id: {}", channel_id))?;
+
+        let http_guard = self.http.read().await;
+        let Some(http) = http_guard.as_ref() else {
+            return Err(anyhow!("discord http client not available"));
+        };
+
+        let channel = match ChannelId::new(channel_id_num).to_channel(http).await {
+            Ok(channel) => channel,
+            Err(err) => {
+                warn!("failed to fetch discord channel {}: {}", channel_id, err);
+                return Ok(None);
+            }
+        };
+
+        let serenity::all::Channel::Guild(channel) = channel else {
+            debug!(
+                "channel {} exists but is not a guild text channel",
+                channel_id
+            );
+            return Ok(None);
+        };
+
         Ok(Some(DiscordChannel {
-            id: channel_id.to_string(),
-            name: format!("channel_{}", channel_id),
-            guild_id: "unknown_guild".to_string(),
-            topic: None,
+            id: channel.id.to_string(),
+            name: channel.name.clone(),
+            guild_id: channel.guild_id.to_string(),
+            topic: channel.topic.clone(),
         }))
     }
 }
