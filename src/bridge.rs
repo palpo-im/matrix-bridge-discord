@@ -732,16 +732,15 @@ impl BridgeCore {
         _discord_channel_id: &str,
         discord_message_id: &str,
     ) -> Result<()> {
-        let Some(link) = self
+        let link = self
             .db_manager
             .message_store()
             .get_by_discord_message_id(discord_message_id)
-            .await?
-        else {
+            .await?;
+
+        let Some(request) = discord_delete_redaction_request(link.as_ref()) else {
             return Ok(());
         };
-
-        let request = build_discord_delete_redaction_request(&link);
 
         self.matrix_client
             .redact_message(&request.room_id, &request.event_id, Some(request.reason))
@@ -981,6 +980,10 @@ fn build_discord_delete_redaction_request(link: &MessageMapping) -> RedactionReq
     }
 }
 
+fn discord_delete_redaction_request(link: Option<&MessageMapping>) -> Option<RedactionRequest> {
+    link.map(build_discord_delete_redaction_request)
+}
+
 fn build_discord_typing_request(matrix_room_id: &str, discord_user_id: &str) -> TypingRequest {
     TypingRequest {
         room_id: matrix_room_id.to_string(),
@@ -1003,7 +1006,8 @@ mod tests {
 
     use super::{
         apply_message_relation_mappings, build_discord_delete_redaction_request,
-        build_discord_typing_request, should_forward_discord_typing,
+        build_discord_typing_request, discord_delete_redaction_request,
+        should_forward_discord_typing,
         OutboundMatrixMessage,
     };
     use crate::db::{MessageMapping, RoomMapping};
@@ -1060,6 +1064,24 @@ mod tests {
 
         assert_eq!(request.room_id, "!room:example.org");
         assert_eq!(request.event_id, "$matrix-event-1");
+        assert_eq!(request.reason, "Deleted on Discord");
+    }
+
+    #[test]
+    fn discord_delete_redaction_request_returns_none_without_mapping() {
+        let request = discord_delete_redaction_request(None);
+        assert!(request.is_none());
+    }
+
+    #[test]
+    fn discord_delete_redaction_request_returns_some_with_mapping() {
+        let link = mapping("discord-msg-2", "$matrix-event-2");
+
+        let request = discord_delete_redaction_request(Some(&link))
+            .expect("request should be created when mapping exists");
+
+        assert_eq!(request.room_id, "!room:example.org");
+        assert_eq!(request.event_id, "$matrix-event-2");
         assert_eq!(request.reason, "Deleted on Discord");
     }
 
