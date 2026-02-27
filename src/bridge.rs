@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use tracing::{debug, info, warn};
 
+use crate::cache::AsyncTimedCache;
 use crate::db::{DatabaseManager, MessageMapping, RoomMapping};
 use crate::discord::{
     DiscordClient, DiscordCommandHandler, DiscordCommandOutcome, ModerationAction,
@@ -44,6 +45,8 @@ pub struct DiscordMessageContext {
     pub permissions: HashSet<String>,
 }
 
+const ROOM_CACHE_TTL_SECS: u64 = 900;
+
 #[derive(Clone)]
 pub struct BridgeCore {
     matrix_client: Arc<MatrixAppservice>,
@@ -56,6 +59,7 @@ pub struct BridgeCore {
     provisioning: Arc<ProvisioningCoordinator>,
     media_handler: Arc<MediaHandler>,
     message_queue: Arc<ChannelQueue>,
+    room_cache: Arc<AsyncTimedCache<String, RoomMapping>>,
 }
 
 impl BridgeCore {
@@ -80,6 +84,7 @@ impl BridgeCore {
             provisioning: Arc::new(ProvisioningCoordinator::default()),
             media_handler: Arc::new(MediaHandler::new(&homeserver_url)),
             message_queue: Arc::new(ChannelQueue::new()),
+            room_cache: Arc::new(AsyncTimedCache::new(Duration::from_secs(ROOM_CACHE_TTL_SECS))),
             matrix_client,
             discord_client,
             db_manager,
@@ -142,6 +147,26 @@ impl BridgeCore {
         )
         .await
         .map(|_| ())
+    }
+
+    async fn get_room_mapping_cached(&self, matrix_room_id: &str) -> Result<Option<RoomMapping>> {
+        if let Some(cached) = self.room_cache.get(&matrix_room_id.to_string()).await {
+            debug!("room cache hit for {}", matrix_room_id);
+            return Ok(Some(cached));
+        }
+
+        debug!("room cache miss for {}", matrix_room_id);
+        let mapping = self
+            .db_manager
+            .room_store()
+            .get_room_by_matrix_room(matrix_room_id)
+            .await?;
+
+        if let Some(ref m) = mapping {
+            self.room_cache.insert(matrix_room_id.to_string(), m.clone()).await;
+        }
+
+        Ok(mapping)
     }
 
     pub async fn handle_matrix_message(&self, event: &MatrixEvent) -> Result<()> {
@@ -334,11 +359,7 @@ impl BridgeCore {
     }
 
     pub async fn handle_matrix_encryption(&self, event: &MatrixEvent) -> Result<()> {
-        let room_mapping = self
-            .db_manager
-            .room_store()
-            .get_room_by_matrix_room(&event.room_id)
-            .await?;
+        let room_mapping = self.get_room_mapping_cached(&event.room_id).await?;
 
         let Some(mapping) = room_mapping else {
             debug!(
@@ -366,6 +387,8 @@ impl BridgeCore {
             .room_store()
             .delete_room_mapping(mapping.id)
             .await?;
+
+        self.room_cache.remove(&event.room_id).await;
 
         info!("removed room mapping for encrypted room {}", event.room_id);
         Ok(())
@@ -510,11 +533,7 @@ impl BridgeCore {
     }
 
     pub async fn unbridge_matrix_room(&self, matrix_room_id: &str) -> Result<String> {
-        let room_mapping = self
-            .db_manager
-            .room_store()
-            .get_room_by_matrix_room(matrix_room_id)
-            .await?;
+        let room_mapping = self.get_room_mapping_cached(matrix_room_id).await?;
 
         let Some(mapping) = room_mapping else {
             return Ok("This room is not bridged.".to_string());
@@ -571,6 +590,9 @@ impl BridgeCore {
             .room_store()
             .delete_room_mapping(mapping.id)
             .await?;
+
+        self.room_cache.remove(&mapping.matrix_room_id).await;
+
         Ok("This room has been unbridged".to_string())
     }
 
@@ -971,10 +993,12 @@ impl BridgeCore {
             }
             DiscordCommandOutcome::UnbridgeRequested => {
                 if let Some(mapping) = room_mapping {
+                    let matrix_room_id = mapping.matrix_room_id.clone();
                     self.db_manager
                         .room_store()
                         .delete_room_mapping(mapping.id)
                         .await?;
+                    self.room_cache.remove(&matrix_room_id).await;
                     self.discord_client
                         .send_message(&ctx.channel_id, "This channel has been unbridged")
                         .await?;
@@ -1115,6 +1139,8 @@ impl BridgeCore {
             .room_store()
             .delete_room_mapping(mapping.id)
             .await?;
+
+        self.room_cache.remove(&mapping.matrix_room_id).await;
 
         info!("removed room mapping for deleted channel {}", discord_channel_id);
         Ok(())
