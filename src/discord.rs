@@ -273,6 +273,54 @@ impl SerenityEventHandler for ReadySignalHandler {
         }
     }
 
+    async fn user_update(&self, _ctx: SerenityContext, _old: Option<serenity::model::user::CurrentUser>, new: serenity::model::user::CurrentUser) {
+        let bridge = self.bridge.read().await.clone();
+        let Some(bridge) = bridge else {
+            return;
+        };
+
+        if new.bot {
+            return;
+        }
+
+        if let Err(err) = bridge
+            .handle_discord_user_update(&new.id.to_string(), &new.name, new.avatar_url().as_deref())
+            .await
+        {
+            error!("failed to handle discord user update: {err}");
+        }
+    }
+
+    async fn guild_member_update(&self, _ctx: SerenityContext, _old: Option<serenity::model::guild::Member>, new: Option<serenity::model::guild::Member>, _event: serenity::model::event::GuildMemberUpdateEvent) {
+        let bridge = self.bridge.read().await.clone();
+        let Some(bridge) = bridge else {
+            return;
+        };
+
+        let Some(new) = new else {
+            return;
+        };
+
+        if new.user.bot {
+            return;
+        }
+
+        let display_name = new.nick.as_ref().unwrap_or(&new.user.name);
+        let avatar_url = new.avatar_url().or_else(|| new.user.avatar_url());
+
+        if let Err(err) = bridge
+            .handle_discord_guild_member_update(
+                &new.guild_id.to_string(),
+                &new.user.id.to_string(),
+                display_name,
+                avatar_url.as_deref(),
+            )
+            .await
+        {
+            error!("failed to handle discord guild member update: {err}");
+        }
+    }
+
     async fn typing_start(&self, _ctx: SerenityContext, event: TypingStartEvent) {
         let bridge = self.bridge.read().await.clone();
         let Some(bridge) = bridge else {
@@ -284,6 +332,62 @@ impl SerenityEventHandler for ReadySignalHandler {
             .await
         {
             error!("failed to handle discord typing event: {err}");
+        }
+    }
+
+    async fn channel_update(&self, _ctx: SerenityContext, _old: Option<serenity::model::channel::GuildChannel>, new: serenity::model::channel::GuildChannel) {
+        let bridge = self.bridge.read().await.clone();
+        let Some(bridge) = bridge else {
+            return;
+        };
+
+        if let Err(err) = bridge
+            .handle_discord_channel_update(&new.id.to_string(), &new.name, new.topic.as_deref())
+            .await
+        {
+            error!("failed to handle discord channel update: {err}");
+        }
+    }
+
+    async fn channel_delete(&self, _ctx: SerenityContext, channel: serenity::model::channel::GuildChannel, _messages: Option<Vec<SerenityMessage>>) {
+        let bridge = self.bridge.read().await.clone();
+        let Some(bridge) = bridge else {
+            return;
+        };
+
+        if let Err(err) = bridge
+            .handle_discord_channel_delete(&channel.id.to_string())
+            .await
+        {
+            error!("failed to handle discord channel delete: {err}");
+        }
+    }
+
+    async fn guild_update(&self, _ctx: SerenityContext, _old: Option<serenity::model::guild::Guild>, new: serenity::model::guild::PartialGuild) {
+        let bridge = self.bridge.read().await.clone();
+        let Some(bridge) = bridge else {
+            return;
+        };
+
+        if let Err(err) = bridge
+            .handle_discord_guild_update(&new.id.to_string(), &new.name, new.icon_url().as_deref())
+            .await
+        {
+            error!("failed to handle discord guild update: {err}");
+        }
+    }
+
+    async fn guild_delete(&self, _ctx: SerenityContext, incomplete: serenity::model::guild::UnavailableGuild, _full: Option<serenity::model::guild::Guild>) {
+        let bridge = self.bridge.read().await.clone();
+        let Some(bridge) = bridge else {
+            return;
+        };
+
+        if let Err(err) = bridge
+            .handle_discord_guild_delete(&incomplete.id.to_string())
+            .await
+        {
+            error!("failed to handle discord guild delete: {err}");
         }
     }
 }
@@ -572,11 +676,11 @@ impl DiscordClient {
         content: &str,
         _attachments: &[String],
         _reply_to: Option<&str>,
-        _edit_of: Option<&str>,
+        edit_of: Option<&str>,
         username: &str,
         avatar_url: Option<&str>,
     ) -> Result<String> {
-        use serenity::builder::ExecuteWebhook;
+        use serenity::builder::{ExecuteWebhook, EditWebhookMessage};
         
         let webhook_url = format!(
             "https://discord.com/api/webhooks/{}/{}",
@@ -585,6 +689,20 @@ impl DiscordClient {
         
         let webhook = Webhook::from_url(http, &webhook_url).await
             .map_err(|e| anyhow!("failed to parse webhook url: {}", e))?;
+
+        if let Some(message_id_str) = edit_of {
+            let message_id: u64 = message_id_str.parse()
+                .map_err(|e| anyhow!("invalid message id for edit: {}", e))?;
+            
+            let builder = EditWebhookMessage::new()
+                .content(content);
+            
+            webhook.edit_message(http, MessageId::new(message_id), builder).await
+                .map_err(|e| anyhow!("webhook edit failed: {}", e))?;
+            
+            info!("edited message via webhook, message_id={}", message_id_str);
+            return Ok(message_id_str.to_string());
+        }
 
         let mut builder = ExecuteWebhook::new()
             .content(content)
@@ -609,9 +727,9 @@ impl DiscordClient {
         content: &str,
         attachments: &[String],
         _reply_to: Option<&str>,
-        _edit_of: Option<&str>,
+        edit_of: Option<&str>,
     ) -> Result<String> {
-        use serenity::builder::CreateMessage;
+        use serenity::builder::{CreateMessage, EditMessage};
         
         let channel = ChannelId::new(channel_id);
         
@@ -621,6 +739,17 @@ impl DiscordClient {
                 message_content.push('\n');
             }
             message_content.push_str(attachment);
+        }
+
+        if let Some(message_id_str) = edit_of {
+            let message_id: u64 = message_id_str.parse()
+                .map_err(|e| anyhow!("invalid message id for edit: {}", e))?;
+            
+            let message = channel.edit_message(http, MessageId::new(message_id), EditMessage::new().content(&message_content)).await
+                .map_err(|e| anyhow!("direct message edit failed: {}", e))?;
+            
+            info!("edited message directly in channel {}, message_id={}", channel_id, message.id);
+            return Ok(message.id.to_string());
         }
 
         let message = channel.send_message(http, CreateMessage::new().content(&message_content)).await

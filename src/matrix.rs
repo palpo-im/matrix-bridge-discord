@@ -320,6 +320,46 @@ impl MatrixAppservice {
         Ok(())
     }
 
+    pub async fn get_room_name(&self, room_id: &str) -> Result<Option<String>> {
+        let state = self
+            .appservice
+            .client
+            .get_room_state_event(room_id, "m.room.name", "")
+            .await
+            .ok();
+        
+        Ok(state.and_then(|s| s.get("name").and_then(|n| n.as_str()).map(ToOwned::to_owned)))
+    }
+
+    pub async fn get_room_topic(&self, room_id: &str) -> Result<Option<String>> {
+        let state = self
+            .appservice
+            .client
+            .get_room_state_event(room_id, "m.room.topic", "")
+            .await
+            .ok();
+        
+        Ok(state.and_then(|s| s.get("topic").and_then(|t| t.as_str()).map(ToOwned::to_owned)))
+    }
+
+    pub async fn set_room_name(&self, room_id: &str, name: &str) -> Result<()> {
+        let event_content = json!({ "name": name });
+        self.appservice
+            .client
+            .send_state_event(room_id, "m.room.name", "", &event_content)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn set_room_topic(&self, room_id: &str, topic: &str) -> Result<()> {
+        let event_content = json!({ "topic": topic });
+        self.appservice
+            .client
+            .send_state_event(room_id, "m.room.topic", "", &event_content)
+            .await?;
+        Ok(())
+    }
+
     pub async fn get_user_profile(
         &self,
         user_id: &str,

@@ -956,6 +956,205 @@ impl BridgeCore {
         self.presence_handler.enqueue_user(presence);
     }
 
+    pub async fn handle_discord_channel_update(
+        &self,
+        discord_channel_id: &str,
+        new_name: &str,
+        new_topic: Option<&str>,
+    ) -> Result<()> {
+        let room_mapping = self
+            .db_manager
+            .room_store()
+            .get_room_by_discord_channel(discord_channel_id)
+            .await?;
+
+        let Some(mapping) = room_mapping else {
+            debug!("ignoring channel update for unmapped channel {}", discord_channel_id);
+            return Ok(());
+        };
+
+        let name_pattern = &self.matrix_client.config().channel.name_pattern;
+        let formatted_name = crate::utils::formatting::apply_pattern_string(
+            name_pattern,
+            &[
+                ("guild", &mapping.discord_guild_id),
+                ("name", &format!("#{}", new_name)),
+            ],
+        );
+
+        let current_name = self.matrix_client.get_room_name(&mapping.matrix_room_id).await?;
+        if current_name.as_deref() != Some(&formatted_name) {
+            self.matrix_client.set_room_name(&mapping.matrix_room_id, &formatted_name).await?;
+            
+            let mut updated = mapping.clone();
+            updated.discord_channel_name = new_name.to_string();
+            updated.updated_at = chrono::Utc::now();
+            self.db_manager.room_store().update_room_mapping(&updated).await?;
+            
+            info!("updated room name for channel {} to {}", discord_channel_id, formatted_name);
+        }
+
+        if let Some(topic) = new_topic {
+            let current_topic = self.matrix_client.get_room_topic(&mapping.matrix_room_id).await?;
+            if current_topic.as_deref() != Some(topic) {
+                self.matrix_client.set_room_topic(&mapping.matrix_room_id, topic).await?;
+                info!("updated room topic for channel {}", discord_channel_id);
+            }
+        }
+
+        Ok(())
+    }
+
+    pub async fn handle_discord_channel_delete(
+        &self,
+        discord_channel_id: &str,
+    ) -> Result<()> {
+        let room_mapping = self
+            .db_manager
+            .room_store()
+            .get_room_by_discord_channel(discord_channel_id)
+            .await?;
+
+        let Some(mapping) = room_mapping else {
+            debug!("ignoring channel delete for unmapped channel {}", discord_channel_id);
+            return Ok(());
+        };
+
+        let delete_options = &self.matrix_client.config().channel.delete_options;
+        let client = &self.matrix_client.appservice.client;
+
+        if let Some(prefix) = &delete_options.name_prefix {
+            if let Ok(state) = client
+                .get_room_state_event(&mapping.matrix_room_id, "m.room.name", "")
+                .await
+            {
+                if let Some(name) = state.get("name").and_then(|n| n.as_str()) {
+                    let new_name = format!("{}{}", prefix, name);
+                    let event_content = serde_json::json!({ "name": new_name });
+                    let _ = client
+                        .send_state_event(&mapping.matrix_room_id, "m.room.name", "", &event_content)
+                        .await;
+                }
+            }
+        }
+
+        if let Some(prefix) = &delete_options.topic_prefix {
+            if let Ok(state) = client
+                .get_room_state_event(&mapping.matrix_room_id, "m.room.topic", "")
+                .await
+            {
+                if let Some(topic) = state.get("topic").and_then(|t| t.as_str()) {
+                    let new_topic = format!("{}{}", prefix, topic);
+                    let event_content = serde_json::json!({ "topic": new_topic });
+                    let _ = client
+                        .send_state_event(&mapping.matrix_room_id, "m.room.topic", "", &event_content)
+                        .await;
+                }
+            }
+        }
+
+        self.db_manager
+            .room_store()
+            .delete_room_mapping(mapping.id)
+            .await?;
+
+        info!("removed room mapping for deleted channel {}", discord_channel_id);
+        Ok(())
+    }
+
+    pub async fn handle_discord_guild_update(
+        &self,
+        _discord_guild_id: &str,
+        _new_name: &str,
+        _new_icon_url: Option<&str>,
+    ) -> Result<()> {
+        // Future: Update all bridged rooms with new guild info
+        // For now, we just log the event
+        debug!("guild update event received, guild_id={}", _discord_guild_id);
+        Ok(())
+    }
+
+    pub async fn handle_discord_user_update(
+        &self,
+        discord_user_id: &str,
+        new_username: &str,
+        new_avatar_url: Option<&str>,
+    ) -> Result<()> {
+        let user_mapping = self
+            .db_manager
+            .user_store()
+            .get_user_by_discord_id(discord_user_id)
+            .await?;
+
+        let Some(mapping) = user_mapping else {
+            debug!("ignoring user update for unmapped user {}", discord_user_id);
+            return Ok(());
+        };
+
+        let mut updated = mapping.clone();
+        updated.discord_username = new_username.to_string();
+        updated.discord_avatar = new_avatar_url.map(ToOwned::to_owned);
+        updated.updated_at = chrono::Utc::now();
+        self.db_manager.user_store().update_user_mapping(&updated).await?;
+
+        info!("updated user mapping for {} with new username {}", discord_user_id, new_username);
+        Ok(())
+    }
+
+    pub async fn handle_discord_guild_member_update(
+        &self,
+        discord_guild_id: &str,
+        discord_user_id: &str,
+        new_nick: &str,
+        new_avatar_url: Option<&str>,
+    ) -> Result<()> {
+        let user_mapping = self
+            .db_manager
+            .user_store()
+            .get_user_by_discord_id(discord_user_id)
+            .await?;
+
+        let Some(mapping) = user_mapping else {
+            debug!("ignoring guild member update for unmapped user {}", discord_user_id);
+            return Ok(());
+        };
+
+        let mut updated = mapping.clone();
+        if new_avatar_url.is_some() {
+            updated.discord_avatar = new_avatar_url.map(ToOwned::to_owned);
+        }
+        updated.updated_at = chrono::Utc::now();
+        self.db_manager.user_store().update_user_mapping(&updated).await?;
+
+        info!("updated user mapping for {} in guild {} with new nick {}", discord_user_id, discord_guild_id, new_nick);
+        Ok(())
+    }
+
+    pub async fn handle_discord_guild_delete(
+        &self,
+        discord_guild_id: &str,
+    ) -> Result<()> {
+        let room_mappings = self
+            .db_manager
+            .room_store()
+            .list_room_mappings(i64::MAX, 0)
+            .await?;
+
+        let affected_rooms: Vec<_> = room_mappings
+            .iter()
+            .filter(|m| m.discord_guild_id == discord_guild_id)
+            .collect();
+
+        for mapping in &affected_rooms {
+            if let Err(err) = self.handle_discord_channel_delete(&mapping.discord_channel_id).await {
+                warn!("failed to clean up room mapping for guild {}: {}", discord_guild_id, err);
+            }
+        }
+
+        info!("cleaned up {} room mappings for deleted guild {}", affected_rooms.len(), discord_guild_id);
+        Ok(())
+    }
+
     pub fn db(&self) -> Arc<DatabaseManager> {
         self.db_manager.clone()
     }
