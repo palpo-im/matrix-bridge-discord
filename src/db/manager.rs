@@ -425,4 +425,66 @@ mod tests {
             .expect("query mapping after delete");
         assert!(after_delete.is_none());
     }
+
+    #[tokio::test]
+    async fn sqlite_bulk_delete_with_duplicate_ids_clears_mappings() {
+        let file = NamedTempFile::new().expect("temp sqlite file");
+        let db_path = file.path().to_string_lossy().to_string();
+
+        let config = DatabaseConfig {
+            url: None,
+            conn_string: None,
+            filename: Some(db_path),
+            user_store_path: None,
+            room_store_path: None,
+            max_connections: Some(1),
+            min_connections: Some(1),
+        };
+
+        let manager = DatabaseManager::new(&config).await.expect("db manager");
+        manager.migrate().await.expect("migrate");
+
+        let now = Utc::now();
+        for (discord_id, matrix_event_id) in [
+            ("discord-msg-a", "$event-a"),
+            ("discord-msg-b", "$event-b"),
+            ("discord-msg-c", "$event-c"),
+        ] {
+            manager
+                .message_store()
+                .upsert_message_mapping(&MessageMapping {
+                    id: 0,
+                    discord_message_id: discord_id.to_string(),
+                    matrix_room_id: "!room:example.org".to_string(),
+                    matrix_event_id: matrix_event_id.to_string(),
+                    created_at: now,
+                    updated_at: now,
+                })
+                .await
+                .expect("insert mapping");
+        }
+
+        for discord_id in [
+            "discord-msg-a",
+            "discord-msg-b",
+            "discord-msg-a",
+            "discord-msg-c",
+            "discord-msg-b",
+        ] {
+            manager
+                .message_store()
+                .delete_by_discord_message_id(discord_id)
+                .await
+                .expect("delete mapping");
+        }
+
+        for discord_id in ["discord-msg-a", "discord-msg-b", "discord-msg-c"] {
+            let maybe_mapping = manager
+                .message_store()
+                .get_by_discord_message_id(discord_id)
+                .await
+                .expect("query mapping after bulk delete");
+            assert!(maybe_mapping.is_none(), "expected {discord_id} to be removed");
+        }
+    }
 }

@@ -420,4 +420,14 @@ mod tests {
         let user_id = ghost_user_id("12345", "example.org");
         assert_eq!(user_id, "@_discord_12345:example.org");
     }
+
+    #[test]
+    fn message_content_prefers_edit_relation_over_reply_relation() {
+        let content = build_matrix_message_content("edited", Some("$reply_target"), Some("$edit_target"));
+
+        assert_eq!(content["body"], "* edited");
+        assert_eq!(content["m.relates_to"]["rel_type"], "m.replace");
+        assert_eq!(content["m.relates_to"]["event_id"], "$edit_target");
+        assert!(content["m.relates_to"].get("m.in_reply_to").is_none());
+    }
 }
