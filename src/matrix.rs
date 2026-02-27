@@ -21,6 +21,12 @@ pub use self::command_handler::{
 };
 pub use self::event_handler::{MatrixEventHandler, MatrixEventHandlerImpl, MatrixEventProcessor};
 
+mod urlencoding {
+    pub fn encode(s: &str) -> String {
+        url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
+    }
+}
+
 pub struct BridgeAppserviceHandler {
     processor: Option<Arc<MatrixEventProcessor>>,
 }
@@ -248,7 +254,7 @@ impl MatrixAppservice {
         room_id: &str,
         sender: &str,
         body: &str,
-        _attachments: &[String], // TODO: Implement attachment uploading
+        _attachments: &[String],
         reply_to: Option<&str>,
         edit_of: Option<&str>,
     ) -> Result<String> {
@@ -264,6 +270,91 @@ impl MatrixAppservice {
             .await?;
 
         Ok(event_id)
+    }
+
+    pub async fn send_media_message(
+        &self,
+        room_id: &str,
+        sender: &str,
+        msgtype: &str,
+        body: &str,
+        url: &str,
+        info: Option<&serde_json::Value>,
+        reply_to: Option<&str>,
+    ) -> Result<String> {
+        let ghost_client = self.appservice.client.clone();
+        ghost_client
+            .impersonate_user_id(Some(sender), None::<&str>)
+            .await;
+
+        let mut content = json!({
+            "msgtype": msgtype,
+            "body": body,
+            "url": url,
+        });
+
+        if let Some(info) = info {
+            content["info"] = info.clone();
+        }
+
+        if let Some(reply_event_id) = reply_to {
+            content["m.relates_to"] = json!({
+                "m.in_reply_to": {
+                    "event_id": reply_event_id
+                }
+            });
+        }
+
+        let event_id = ghost_client
+            .send_event(room_id, "m.room.message", &content)
+            .await?;
+
+        Ok(event_id)
+    }
+
+    pub async fn upload_media(
+        &self,
+        media: &crate::media::MediaInfo,
+    ) -> Result<String> {
+        use reqwest::Client;
+        
+        let upload_url = format!(
+            "{}/_matrix/media/v3/upload?filename={}",
+            self.config.bridge.homeserver_url.trim_end_matches('/'),
+            urlencoding::encode(&media.filename)
+        );
+
+        debug!("uploading media {} to Matrix", media.filename);
+
+        let client = Client::new();
+        let response = client
+            .post(&upload_url)
+            .header("Authorization", format!("Bearer {}", self.config.registration.appservice_token))
+            .header("Content-Type", &media.content_type)
+            .body(media.data.clone())
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to upload media: {}", e))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("failed to upload media: {} - {}", status, body));
+        }
+
+        let body_bytes = response.bytes().await
+            .map_err(|e| anyhow::anyhow!("failed to read response: {}", e))?;
+        let json: Value = serde_json::from_slice(&body_bytes)
+            .map_err(|e| anyhow::anyhow!("failed to parse response: {}", e))?;
+
+        let content_uri = json
+            .get("content_uri")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("no content_uri in response"))?
+            .to_string();
+
+        debug!("uploaded media to {}", content_uri);
+        Ok(content_uri)
     }
 
     pub async fn redact_message(

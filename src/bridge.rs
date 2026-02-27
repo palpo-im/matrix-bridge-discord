@@ -4,6 +4,7 @@ use std::{collections::HashSet, time::Duration};
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Utc;
+use serde_json::json;
 use tracing::{debug, info, warn};
 
 use crate::cache::AsyncTimedCache;
@@ -722,6 +723,124 @@ impl BridgeCore {
         Ok(event_id)
     }
 
+    pub async fn send_to_matrix_with_attachments(
+        &self,
+        matrix_room_id: &str,
+        discord_sender: &str,
+        outbound: &OutboundMatrixMessage,
+    ) -> Result<String> {
+        let mut last_event_id: Option<String> = None;
+        
+        for attachment_url in &outbound.attachments {
+            match self.media_handler.download_from_url(attachment_url).await {
+                Ok(media) => {
+                    if media.size > 50 * 1024 * 1024 {
+                        warn!(
+                            "attachment too large for Matrix: {} bytes, sending as URL instead",
+                            media.size
+                        );
+                        let body = format!("{}: {}", media.filename, attachment_url);
+                        last_event_id = Some(
+                            self.matrix_client
+                                .send_message_with_metadata(
+                                    matrix_room_id,
+                                    discord_sender,
+                                    &body,
+                                    &[],
+                                    outbound.reply_to.as_deref(),
+                                    None,
+                                )
+                                .await?,
+                        );
+                    } else {
+                        let msgtype = match media.content_type.as_str() {
+                            ct if ct.starts_with("image/") => "m.image",
+                            ct if ct.starts_with("video/") => "m.video",
+                            ct if ct.starts_with("audio/") => "m.audio",
+                            _ => "m.file",
+                        };
+
+                        match self.matrix_client.upload_media(&media).await {
+                            Ok(mxc_url) => {
+                                let info = json!({
+                                    "mimetype": media.content_type,
+                                    "size": media.size,
+                                });
+
+                                last_event_id = Some(
+                                    self.matrix_client
+                                        .send_media_message(
+                                            matrix_room_id,
+                                            discord_sender,
+                                            msgtype,
+                                            &media.filename,
+                                            &mxc_url,
+                                            Some(&info),
+                                            outbound.reply_to.as_deref(),
+                                        )
+                                        .await?,
+                                );
+                                info!(
+                                    "uploaded discord attachment to matrix room={} file={} size={} mxc={}",
+                                    matrix_room_id, media.filename, media.size, mxc_url
+                                );
+                            }
+                            Err(e) => {
+                                warn!("failed to upload attachment to matrix: {}, sending URL", e);
+                                let body = format!("{}: {}", media.filename, attachment_url);
+                                last_event_id = Some(
+                                    self.matrix_client
+                                        .send_message_with_metadata(
+                                            matrix_room_id,
+                                            discord_sender,
+                                            &body,
+                                            &[],
+                                            outbound.reply_to.as_deref(),
+                                            None,
+                                        )
+                                        .await?,
+                                );
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("failed to download attachment from discord: {}, sending URL", e);
+                    let body = format!("Attachment: {}", attachment_url);
+                    last_event_id = Some(
+                        self.matrix_client
+                            .send_message_with_metadata(
+                                matrix_room_id,
+                                discord_sender,
+                                &body,
+                                &[],
+                                outbound.reply_to.as_deref(),
+                                None,
+                            )
+                            .await?,
+                    );
+                }
+            }
+        }
+
+        if !outbound.body.is_empty() {
+            last_event_id = Some(
+                self.matrix_client
+                    .send_message_with_metadata(
+                        matrix_room_id,
+                        discord_sender,
+                        &outbound.body,
+                        &[],
+                        outbound.reply_to.as_deref(),
+                        outbound.edit_of.as_deref(),
+                    )
+                    .await?,
+            );
+        }
+
+        last_event_id.ok_or_else(|| anyhow::anyhow!("no message was sent"))
+    }
+
     pub async fn handle_discord_message_with_context(
         &self,
         ctx: DiscordMessageContext,
@@ -836,9 +955,12 @@ impl BridgeCore {
             outbound.body.len(),
             preview_text(&outbound.body)
         );
-        let matrix_event_id = self
-            .send_to_matrix_message(&mapping.matrix_room_id, &ctx.sender_id, outbound)
-            .await?;
+
+        let matrix_event_id = if !outbound.attachments.is_empty() {
+            self.send_to_matrix_with_attachments(&mapping.matrix_room_id, &ctx.sender_id, &outbound).await?
+        } else {
+            self.send_to_matrix_message(&mapping.matrix_room_id, &ctx.sender_id, outbound).await?
+        };
 
         if let Some(source_message_id) = ctx.source_message_id {
             self.db_manager
