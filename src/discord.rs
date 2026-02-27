@@ -416,12 +416,15 @@ impl SerenityEventHandler for ReadySignalHandler {
             return;
         };
 
+        let avatar_url = member.avatar_url().or_else(|| member.user.avatar_url());
+        let avatar_url = avatar_url.as_deref();
+
         if let Err(err) = bridge
             .handle_discord_guild_member_add(
                 &member.guild_id.to_string(),
                 &member.user.id.to_string(),
                 member.nick.as_deref().unwrap_or(&member.user.name),
-                member.avatar_url().as_deref().or_else(|| member.user.avatar_url().as_deref()),
+                avatar_url,
             )
             .await
         {

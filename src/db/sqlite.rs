@@ -8,7 +8,7 @@ use crate::db::schema_sqlite::{message_mappings, room_mappings, user_mappings};
 
 use super::{
     DatabaseError,
-    models::{MessageMapping, RoomMapping, UserMapping},
+    models::{EmojiMapping, MessageMapping, RemoteRoomInfo, RemoteUserInfo, RoomMapping, UserMapping},
 };
 
 // Helper function to convert DateTime to ISO string for SQLite
@@ -339,6 +339,41 @@ impl super::RoomStore for SqliteRoomStore {
         .await
         .map_err(|e| DatabaseError::Query(format!("database task failed: {e}")))?
     }
+
+    async fn get_rooms_by_guild(
+        &self,
+        guild_id: &str,
+    ) -> Result<Vec<RoomMapping>, DatabaseError> {
+        let guild_id = guild_id.to_string();
+        let db_path = self.db_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = establish_connection(&db_path)?;
+            use crate::db::schema_sqlite::room_mappings::dsl::*;
+            let results = room_mappings
+                .filter(discord_guild_id.eq(guild_id))
+                .select(DbRoomMapping::as_select())
+                .load::<DbRoomMapping>(&mut conn)
+                .map_err(|e| DatabaseError::Query(e.to_string()))?;
+            results.into_iter().map(|m| m.to_room_mapping()).collect()
+        })
+        .await
+        .map_err(|e| DatabaseError::Query(format!("database task failed: {e}")))?
+    }
+
+    async fn get_remote_room_info(
+        &self,
+        _matrix_room_id: &str,
+    ) -> Result<Option<RemoteRoomInfo>, DatabaseError> {
+        Ok(None)
+    }
+
+    async fn update_remote_room_info(
+        &self,
+        _matrix_room_id: &str,
+        _info: &RemoteRoomInfo,
+    ) -> Result<(), DatabaseError> {
+        Ok(())
+    }
 }
 
 pub struct SqliteUserStore {
@@ -430,6 +465,57 @@ impl super::UserStore for SqliteUserStore {
             diesel::delete(user_mappings::table.filter(user_mappings::id.eq(id)))
                 .execute(&mut conn)
                 .map(|_| ())
+                .map_err(|e| DatabaseError::Query(e.to_string()))
+        })
+        .await
+        .map_err(|e| DatabaseError::Query(format!("database task failed: {e}")))?
+    }
+
+    async fn get_user_by_matrix_id(
+        &self,
+        matrix_id: &str,
+    ) -> Result<Option<UserMapping>, DatabaseError> {
+        let matrix_id = matrix_id.to_string();
+        let db_path = self.db_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = establish_connection(&db_path)?;
+            use crate::db::schema_sqlite::user_mappings::dsl::*;
+            user_mappings
+                .filter(matrix_user_id.eq(matrix_id))
+                .select(DbUserMapping::as_select())
+                .first::<DbUserMapping>(&mut conn)
+                .optional()
+                .map_err(|e| DatabaseError::Query(e.to_string()))?
+                .map(|m| m.to_user_mapping())
+                .transpose()
+        })
+        .await
+        .map_err(|e| DatabaseError::Query(format!("database task failed: {e}")))?
+    }
+
+    async fn get_remote_user_info(
+        &self,
+        _discord_user_id: &str,
+    ) -> Result<Option<RemoteUserInfo>, DatabaseError> {
+        Ok(None)
+    }
+
+    async fn update_remote_user_info(
+        &self,
+        _discord_user_id: &str,
+        _info: &RemoteUserInfo,
+    ) -> Result<(), DatabaseError> {
+        Ok(())
+    }
+
+    async fn get_all_user_ids(&self) -> Result<Vec<String>, DatabaseError> {
+        let db_path = self.db_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = establish_connection(&db_path)?;
+            use crate::db::schema_sqlite::user_mappings::dsl::*;
+            user_mappings
+                .select(matrix_user_id)
+                .load::<String>(&mut conn)
                 .map_err(|e| DatabaseError::Query(e.to_string()))
         })
         .await
@@ -549,6 +635,165 @@ impl super::MessageStore for SqliteMessageStore {
             let mut conn = establish_connection(&db_path)?;
             use crate::db::schema_sqlite::message_mappings::dsl::*;
             diesel::delete(message_mappings.filter(discord_message_id.eq(discord_message_id_param)))
+                .execute(&mut conn)
+                .map(|_| ())
+                .map_err(|e| DatabaseError::Query(e.to_string()))
+        })
+        .await
+        .map_err(|e| DatabaseError::Query(format!("database task failed: {e}")))?
+    }
+
+    async fn delete_by_matrix_event_id(
+        &self,
+        matrix_event_id_param: &str,
+    ) -> Result<(), DatabaseError> {
+        let matrix_event_id_param = matrix_event_id_param.to_string();
+        let db_path = self.db_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = establish_connection(&db_path)?;
+            use crate::db::schema_sqlite::message_mappings::dsl::*;
+            diesel::delete(message_mappings.filter(matrix_event_id.eq(matrix_event_id_param)))
+                .execute(&mut conn)
+                .map(|_| ())
+                .map_err(|e| DatabaseError::Query(e.to_string()))
+        })
+        .await
+        .map_err(|e| DatabaseError::Query(format!("database task failed: {e}")))?
+    }
+}
+
+pub struct SqliteEmojiStore {
+    db_path: Arc<String>,
+}
+
+impl SqliteEmojiStore {
+    pub fn new(db_path: Arc<String>) -> Self {
+        Self { db_path }
+    }
+}
+
+#[derive(Debug, Clone, QueryableByName)]
+#[diesel(table_name = crate::db::schema_sqlite::emoji_mappings)]
+struct DbEmojiMapping {
+    id: i32,
+    discord_emoji_id: String,
+    emoji_name: String,
+    animated: bool,
+    mxc_url: String,
+    created_at: String,
+    updated_at: String,
+}
+
+impl DbEmojiMapping {
+    fn to_emoji_mapping(&self) -> Result<EmojiMapping, DatabaseError> {
+        Ok(EmojiMapping {
+            id: self.id as i64,
+            discord_emoji_id: self.discord_emoji_id.clone(),
+            emoji_name: self.emoji_name.clone(),
+            animated: self.animated,
+            mxc_url: self.mxc_url.clone(),
+            created_at: string_to_datetime(&self.created_at)?,
+            updated_at: string_to_datetime(&self.updated_at)?,
+        })
+    }
+}
+
+#[async_trait]
+impl super::EmojiStore for SqliteEmojiStore {
+    async fn get_emoji_by_discord_id(
+        &self,
+        discord_emoji_id: &str,
+    ) -> Result<Option<EmojiMapping>, DatabaseError> {
+        let discord_emoji_id = discord_emoji_id.to_string();
+        let db_path = self.db_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = establish_connection(&db_path)?;
+            diesel::sql_query(
+                "SELECT id, discord_emoji_id, emoji_name, animated, mxc_url, created_at, updated_at FROM emoji_mappings WHERE discord_emoji_id = ?"
+            )
+            .bind::<diesel::sql_types::Text, _>(&discord_emoji_id)
+            .get_result::<DbEmojiMapping>(&mut conn)
+            .optional()
+            .map_err(|e| DatabaseError::Query(e.to_string()))?
+            .map(|m| m.to_emoji_mapping())
+            .transpose()
+        })
+        .await
+        .map_err(|e| DatabaseError::Query(format!("database task failed: {e}")))?
+    }
+
+    async fn get_emoji_by_mxc(
+        &self,
+        mxc_url: &str,
+    ) -> Result<Option<EmojiMapping>, DatabaseError> {
+        let mxc_url = mxc_url.to_string();
+        let db_path = self.db_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = establish_connection(&db_path)?;
+            diesel::sql_query(
+                "SELECT id, discord_emoji_id, emoji_name, animated, mxc_url, created_at, updated_at FROM emoji_mappings WHERE mxc_url = ?"
+            )
+            .bind::<diesel::sql_types::Text, _>(&mxc_url)
+            .get_result::<DbEmojiMapping>(&mut conn)
+            .optional()
+            .map_err(|e| DatabaseError::Query(e.to_string()))?
+            .map(|m| m.to_emoji_mapping())
+            .transpose()
+        })
+        .await
+        .map_err(|e| DatabaseError::Query(format!("database task failed: {e}")))?
+    }
+
+    async fn create_emoji(&self, emoji: &EmojiMapping) -> Result<(), DatabaseError> {
+        let emoji = emoji.clone();
+        let db_path = self.db_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = establish_connection(&db_path)?;
+            diesel::sql_query(
+                "INSERT INTO emoji_mappings (discord_emoji_id, emoji_name, animated, mxc_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+            )
+            .bind::<diesel::sql_types::Text, _>(&emoji.discord_emoji_id)
+            .bind::<diesel::sql_types::Text, _>(&emoji.emoji_name)
+            .bind::<diesel::sql_types::Bool, _>(emoji.animated)
+            .bind::<diesel::sql_types::Text, _>(&emoji.mxc_url)
+            .bind::<diesel::sql_types::Text, _>(&datetime_to_string(&emoji.created_at))
+            .bind::<diesel::sql_types::Text, _>(&datetime_to_string(&emoji.updated_at))
+            .execute(&mut conn)
+            .map(|_| ())
+            .map_err(|e| DatabaseError::Query(e.to_string()))
+        })
+        .await
+        .map_err(|e| DatabaseError::Query(format!("database task failed: {e}")))?
+    }
+
+    async fn update_emoji(&self, emoji: &EmojiMapping) -> Result<(), DatabaseError> {
+        let emoji = emoji.clone();
+        let db_path = self.db_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = establish_connection(&db_path)?;
+            diesel::sql_query(
+                "UPDATE emoji_mappings SET emoji_name = ?, animated = ?, mxc_url = ?, updated_at = ? WHERE discord_emoji_id = ?"
+            )
+            .bind::<diesel::sql_types::Text, _>(&emoji.emoji_name)
+            .bind::<diesel::sql_types::Bool, _>(emoji.animated)
+            .bind::<diesel::sql_types::Text, _>(&emoji.mxc_url)
+            .bind::<diesel::sql_types::Text, _>(&datetime_to_string(&emoji.updated_at))
+            .bind::<diesel::sql_types::Text, _>(&emoji.discord_emoji_id)
+            .execute(&mut conn)
+            .map(|_| ())
+            .map_err(|e| DatabaseError::Query(e.to_string()))
+        })
+        .await
+        .map_err(|e| DatabaseError::Query(format!("database task failed: {e}")))?
+    }
+
+    async fn delete_emoji(&self, discord_emoji_id: &str) -> Result<(), DatabaseError> {
+        let discord_emoji_id = discord_emoji_id.to_string();
+        let db_path = self.db_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = establish_connection(&db_path)?;
+            diesel::sql_query("DELETE FROM emoji_mappings WHERE discord_emoji_id = ?")
+                .bind::<diesel::sql_types::Text, _>(&discord_emoji_id)
                 .execute(&mut conn)
                 .map(|_| ())
                 .map_err(|e| DatabaseError::Query(e.to_string()))

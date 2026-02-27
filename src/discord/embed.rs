@@ -221,9 +221,7 @@ pub fn build_reply_embed(
         });
     }
 
-    embed.color(0x2D2D2D);
-
-    embed
+    embed.color(0x2D2D2D)
 }
 
 #[cfg(test)]

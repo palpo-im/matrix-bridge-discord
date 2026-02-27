@@ -44,9 +44,22 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    emoji_mappings (id) {
+        id -> BigInt,
+        discord_emoji_id -> Text,
+        emoji_name -> Text,
+        animated -> Bool,
+        mxc_url -> Text,
+        created_at -> Timestamptz,
+        updated_at -> Timestamptz,
+    }
+}
+
 diesel::allow_tables_to_appear_in_same_query!(
     room_mappings,
     user_mappings,
     processed_events,
     message_mappings,
+    emoji_mappings,
 );

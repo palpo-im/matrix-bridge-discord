@@ -8,7 +8,7 @@ use crate::db::schema::{message_mappings, room_mappings, user_mappings};
 
 use super::{
     DatabaseError,
-    models::{MessageMapping, RoomMapping, UserMapping},
+    models::{EmojiMapping, MessageMapping, RemoteRoomInfo, RemoteUserInfo, RoomMapping, UserMapping},
 };
 
 #[derive(Debug, Clone, Queryable, Selectable)]
@@ -314,6 +314,39 @@ impl super::RoomStore for PostgresRoomStore {
         })
         .await
     }
+
+    async fn get_rooms_by_guild(
+        &self,
+        guild_id: &str,
+    ) -> Result<Vec<RoomMapping>, DatabaseError> {
+        let pool = self.pool.clone();
+        let guild_id = guild_id.to_string();
+        with_connection(pool, move |conn| {
+            use crate::db::schema::room_mappings::dsl::*;
+            room_mappings
+                .filter(discord_guild_id.eq(guild_id))
+                .select(DbRoomMapping::as_select())
+                .load::<DbRoomMapping>(conn)
+                .map(|rows| rows.into_iter().map(Into::into).collect())
+                .map_err(|e| DatabaseError::Query(e.to_string()))
+        })
+        .await
+    }
+
+    async fn get_remote_room_info(
+        &self,
+        _matrix_room_id: &str,
+    ) -> Result<Option<RemoteRoomInfo>, DatabaseError> {
+        Ok(None)
+    }
+
+    async fn update_remote_room_info(
+        &self,
+        _matrix_room_id: &str,
+        _info: &RemoteRoomInfo,
+    ) -> Result<(), DatabaseError> {
+        Ok(())
+    }
 }
 
 pub struct PostgresUserStore {
@@ -396,6 +429,52 @@ impl super::UserStore for PostgresUserStore {
             diesel::delete(user_mappings::table.filter(user_mappings::id.eq(id)))
                 .execute(conn)
                 .map(|_| ())
+                .map_err(|e| DatabaseError::Query(e.to_string()))
+        })
+        .await
+    }
+
+    async fn get_user_by_matrix_id(
+        &self,
+        matrix_id: &str,
+    ) -> Result<Option<UserMapping>, DatabaseError> {
+        let pool = self.pool.clone();
+        let matrix_id = matrix_id.to_string();
+        with_connection(pool, move |conn| {
+            use crate::db::schema::user_mappings::dsl::*;
+            user_mappings
+                .filter(matrix_user_id.eq(matrix_id))
+                .select(DbUserMapping::as_select())
+                .first::<DbUserMapping>(conn)
+                .optional()
+                .map(|value| value.map(Into::into))
+                .map_err(|e| DatabaseError::Query(e.to_string()))
+        })
+        .await
+    }
+
+    async fn get_remote_user_info(
+        &self,
+        _discord_user_id: &str,
+    ) -> Result<Option<RemoteUserInfo>, DatabaseError> {
+        Ok(None)
+    }
+
+    async fn update_remote_user_info(
+        &self,
+        _discord_user_id: &str,
+        _info: &RemoteUserInfo,
+    ) -> Result<(), DatabaseError> {
+        Ok(())
+    }
+
+    async fn get_all_user_ids(&self) -> Result<Vec<String>, DatabaseError> {
+        let pool = self.pool.clone();
+        with_connection(pool, move |conn| {
+            use crate::db::schema::user_mappings::dsl::*;
+            user_mappings
+                .select(matrix_user_id)
+                .load::<String>(conn)
                 .map_err(|e| DatabaseError::Query(e.to_string()))
         })
         .await
@@ -506,6 +585,177 @@ impl super::MessageStore for PostgresMessageStore {
                 .execute(conn)
                 .map(|_| ())
                 .map_err(|e| DatabaseError::Query(e.to_string()))
+        })
+        .await
+    }
+
+    async fn delete_by_matrix_event_id(
+        &self,
+        matrix_event_id_param: &str,
+    ) -> Result<(), DatabaseError> {
+        let pool = self.pool.clone();
+        let matrix_event_id_param = matrix_event_id_param.to_string();
+        with_connection(pool, move |conn| {
+            use crate::db::schema::message_mappings::dsl::*;
+            diesel::delete(message_mappings.filter(matrix_event_id.eq(matrix_event_id_param)))
+                .execute(conn)
+                .map(|_| ())
+                .map_err(|e| DatabaseError::Query(e.to_string()))
+        })
+        .await
+    }
+}
+
+pub struct PostgresEmojiStore {
+    pool: Pool,
+}
+
+impl PostgresEmojiStore {
+    pub fn new(pool: Pool) -> Self {
+        Self { pool }
+    }
+}
+
+#[derive(Debug, Clone, QueryableByName)]
+#[diesel(table_name = crate::db::schema::emoji_mappings)]
+struct DbEmojiMapping {
+    id: i64,
+    discord_emoji_id: String,
+    emoji_name: String,
+    animated: bool,
+    mxc_url: String,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+impl From<DbEmojiMapping> for EmojiMapping {
+    fn from(value: DbEmojiMapping) -> Self {
+        Self {
+            id: value.id,
+            discord_emoji_id: value.discord_emoji_id,
+            emoji_name: value.emoji_name,
+            animated: value.animated,
+            mxc_url: value.mxc_url,
+            created_at: value.created_at,
+            updated_at: value.updated_at,
+        }
+    }
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = crate::db::schema::emoji_mappings)]
+struct NewEmojiMapping<'a> {
+    discord_emoji_id: &'a str,
+    emoji_name: &'a str,
+    animated: bool,
+    mxc_url: &'a str,
+    created_at: &'a DateTime<Utc>,
+    updated_at: &'a DateTime<Utc>,
+}
+
+#[derive(AsChangeset)]
+#[diesel(table_name = crate::db::schema::emoji_mappings)]
+struct UpdateEmojiMapping<'a> {
+    emoji_name: &'a str,
+    animated: bool,
+    mxc_url: &'a str,
+    updated_at: &'a DateTime<Utc>,
+}
+
+#[async_trait]
+impl super::EmojiStore for PostgresEmojiStore {
+    async fn get_emoji_by_discord_id(
+        &self,
+        discord_emoji_id: &str,
+    ) -> Result<Option<EmojiMapping>, DatabaseError> {
+        let pool = self.pool.clone();
+        let discord_emoji_id = discord_emoji_id.to_string();
+        with_connection(pool, move |conn| {
+            diesel::sql_query(
+                "SELECT id, discord_emoji_id, emoji_name, animated, mxc_url, created_at, updated_at FROM emoji_mappings WHERE discord_emoji_id = $1"
+            )
+            .bind::<diesel::sql_types::Text, _>(&discord_emoji_id)
+            .get_result::<DbEmojiMapping>(conn)
+            .optional()
+            .map(|value| value.map(Into::into))
+            .map_err(|e| DatabaseError::Query(e.to_string()))
+        })
+        .await
+    }
+
+    async fn get_emoji_by_mxc(
+        &self,
+        mxc_url: &str,
+    ) -> Result<Option<EmojiMapping>, DatabaseError> {
+        let pool = self.pool.clone();
+        let mxc_url = mxc_url.to_string();
+        with_connection(pool, move |conn| {
+            diesel::sql_query(
+                "SELECT id, discord_emoji_id, emoji_name, animated, mxc_url, created_at, updated_at FROM emoji_mappings WHERE mxc_url = $1"
+            )
+            .bind::<diesel::sql_types::Text, _>(&mxc_url)
+            .get_result::<DbEmojiMapping>(conn)
+            .optional()
+            .map(|value| value.map(Into::into))
+            .map_err(|e| DatabaseError::Query(e.to_string()))
+        })
+        .await
+    }
+
+    async fn create_emoji(&self, emoji: &EmojiMapping) -> Result<(), DatabaseError> {
+        let pool = self.pool.clone();
+        let emoji = emoji.clone();
+        with_connection(pool, move |conn| {
+            let new_emoji = NewEmojiMapping {
+                discord_emoji_id: &emoji.discord_emoji_id,
+                emoji_name: &emoji.emoji_name,
+                animated: emoji.animated,
+                mxc_url: &emoji.mxc_url,
+                created_at: &emoji.created_at,
+                updated_at: &emoji.updated_at,
+            };
+            diesel::insert_into(crate::db::schema::emoji_mappings::table)
+                .values(&new_emoji)
+                .execute(conn)
+                .map(|_| ())
+                .map_err(|e| DatabaseError::Query(e.to_string()))
+        })
+        .await
+    }
+
+    async fn update_emoji(&self, emoji: &EmojiMapping) -> Result<(), DatabaseError> {
+        let pool = self.pool.clone();
+        let emoji = emoji.clone();
+        with_connection(pool, move |conn| {
+            let changes = UpdateEmojiMapping {
+                emoji_name: &emoji.emoji_name,
+                animated: emoji.animated,
+                mxc_url: &emoji.mxc_url,
+                updated_at: &emoji.updated_at,
+            };
+            diesel::update(
+                crate::db::schema::emoji_mappings::table
+                    .filter(crate::db::schema::emoji_mappings::discord_emoji_id.eq(&emoji.discord_emoji_id))
+            )
+            .set(changes)
+            .execute(conn)
+            .map(|_| ())
+            .map_err(|e| DatabaseError::Query(e.to_string()))
+        })
+        .await
+    }
+
+    async fn delete_emoji(&self, discord_emoji_id: &str) -> Result<(), DatabaseError> {
+        let pool = self.pool.clone();
+        let discord_emoji_id = discord_emoji_id.to_string();
+        with_connection(pool, move |conn| {
+            diesel::delete(
+                crate::db::schema::emoji_mappings::table
+                    .filter(crate::db::schema::emoji_mappings::discord_emoji_id.eq(discord_emoji_id))
+            )
+            .execute(conn)
+            .map(|_| ())
+            .map_err(|e| DatabaseError::Query(e.to_string()))
         })
         .await
     }
