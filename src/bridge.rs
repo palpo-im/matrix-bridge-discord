@@ -12,6 +12,7 @@ use crate::db::{DatabaseManager, MessageMapping, RoomMapping};
 use crate::discord::{
     DiscordClient, DiscordCommandHandler, DiscordCommandOutcome, ModerationAction,
 };
+use crate::emoji::EmojiHandler;
 use crate::matrix::{MatrixAppservice, MatrixCommandHandler, MatrixCommandOutcome, MatrixEvent};
 use crate::media::MediaHandler;
 
@@ -59,6 +60,7 @@ pub struct BridgeCore {
     presence_handler: Arc<PresenceHandler>,
     provisioning: Arc<ProvisioningCoordinator>,
     media_handler: Arc<MediaHandler>,
+    emoji_handler: Arc<EmojiHandler>,
     message_queue: Arc<ChannelQueue>,
     room_cache: Arc<AsyncTimedCache<String, RoomMapping>>,
 }
@@ -71,10 +73,19 @@ impl BridgeCore {
     ) -> Self {
         let bridge_config = matrix_client.config().bridge.clone();
         let homeserver_url = matrix_client.config().bridge.homeserver_url.clone();
+        
+        let media_handler = Arc::new(MediaHandler::new(&homeserver_url));
+        let emoji_handler = Arc::new(EmojiHandler::new(
+            db_manager.clone(),
+            media_handler.clone(),
+            homeserver_url.clone(),
+        ));
+        
         Self {
-            message_flow: Arc::new(MessageFlow::new(
+            message_flow: Arc::new(MessageFlow::with_emoji_handler(
                 matrix_client.clone(),
                 discord_client.clone(),
+                Some(emoji_handler.clone()),
             )),
             matrix_command_handler: Arc::new(MatrixCommandHandler::new(
                 bridge_config.enable_self_service_bridging,
@@ -83,7 +94,8 @@ impl BridgeCore {
             discord_command_handler: Arc::new(DiscordCommandHandler::new()),
             presence_handler: Arc::new(PresenceHandler::new(None)),
             provisioning: Arc::new(ProvisioningCoordinator::default()),
-            media_handler: Arc::new(MediaHandler::new(&homeserver_url)),
+            media_handler,
+            emoji_handler,
             message_queue: Arc::new(ChannelQueue::new()),
             room_cache: Arc::new(AsyncTimedCache::new(Duration::from_secs(ROOM_CACHE_TTL_SECS))),
             matrix_client,

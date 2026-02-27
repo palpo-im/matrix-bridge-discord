@@ -3,6 +3,7 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::discord::{DiscordClient, DiscordEmbed, EmbedAuthor, EmbedFooter};
+use crate::emoji::EmojiHandler;
 use crate::matrix::{MatrixAppservice, MatrixEvent};
 use crate::parsers::{DiscordToMatrixConverter, MatrixToDiscordConverter, MessageUtils};
 
@@ -122,12 +123,24 @@ pub struct MessageFlow {
 
 impl MessageFlow {
     pub fn new(matrix_client: Arc<MatrixAppservice>, discord_client: Arc<DiscordClient>) -> Self {
+        Self::with_emoji_handler(matrix_client, discord_client, None)
+    }
+
+    pub fn with_emoji_handler(
+        matrix_client: Arc<MatrixAppservice>,
+        discord_client: Arc<DiscordClient>,
+        emoji_handler: Option<Arc<EmojiHandler>>,
+    ) -> Self {
         let domain = matrix_client.config().bridge.domain.clone();
+        let mut converter = DiscordToMatrixConverter::new(discord_client).with_domain(domain);
+        
+        if let Some(handler) = emoji_handler {
+            converter = converter.with_emoji_handler(handler);
+        }
+        
         Self {
             matrix_converter: Arc::new(MatrixToDiscordConverter::new(matrix_client)),
-            discord_converter: Arc::new(
-                DiscordToMatrixConverter::new(discord_client).with_domain(domain)
-            ),
+            discord_converter: Arc::new(converter),
         }
     }
 
@@ -242,6 +255,16 @@ impl MessageFlow {
             edit_of: message.edit_of.clone(),
             attachments: message.attachments.clone(),
         }
+    }
+
+    pub async fn discord_to_matrix_async(&self, message: &DiscordInboundMessage) -> (String, Option<String>) {
+        let plain = self.discord_converter.format_for_matrix(&message.content);
+        let formatted = self.discord_converter.format_as_html_async(&message.content).await;
+        (plain, Some(formatted))
+    }
+
+    pub fn discord_converter(&self) -> &DiscordToMatrixConverter {
+        &self.discord_converter
     }
 }
 

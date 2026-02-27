@@ -6,6 +6,7 @@ use regex::Regex;
 use serde_json::{json, Value};
 
 use crate::discord::DiscordClient;
+use crate::emoji::EmojiHandler;
 
 use super::common::{BridgeMessage, EmojiMention, MessageUtils, ParsedMessage};
 
@@ -25,6 +26,7 @@ impl DiscordMessageParser {
 
 pub struct DiscordToMatrixConverter {
     discord_client: Arc<DiscordClient>,
+    emoji_handler: Option<Arc<EmojiHandler>>,
     domain: String,
     mention_regex: Regex,
     channel_regex: Regex,
@@ -47,6 +49,7 @@ impl DiscordToMatrixConverter {
     pub fn new(discord_client: Arc<DiscordClient>) -> Self {
         Self {
             discord_client,
+            emoji_handler: None,
             domain: String::new(),
             mention_regex: Regex::new(r"<@!?(\d+)>").unwrap(),
             channel_regex: Regex::new(r"<#(\d+)>").unwrap(),
@@ -64,6 +67,11 @@ impl DiscordToMatrixConverter {
             spoiler_regex: Regex::new(r"\|\|([^|]+)\|\|").unwrap(),
             quote_regex: Regex::new(r"^> (.+)$").unwrap(),
         }
+    }
+
+    pub fn with_emoji_handler(mut self, handler: Arc<EmojiHandler>) -> Self {
+        self.emoji_handler = Some(handler);
+        self
     }
 
     pub fn with_domain(mut self, domain: String) -> Self {
@@ -258,23 +266,123 @@ impl DiscordToMatrixConverter {
     }
 
     fn convert_emojis_to_matrix(&self, text: &str) -> String {
-        self.emoji_regex
-            .replace_all(text, |caps: &regex::Captures| {
+        let mut result = text.to_string();
+        
+        result = self.animated_emoji_regex
+            .replace_all(&result, |caps: &regex::Captures| {
                 let emoji_name = &caps[1];
                 format!(":{}:", emoji_name)
             })
-            .to_string()
+            .to_string();
+        
+        result = self.emoji_regex
+            .replace_all(&result, |caps: &regex::Captures| {
+                let emoji_name = &caps[1];
+                format!(":{}:", emoji_name)
+            })
+            .to_string();
+        
+        result
     }
 
     fn convert_emojis_to_html(&self, text: &str) -> String {
-        self.emoji_regex
-            .replace_all(text, |caps: &regex::Captures| {
+        let mut result = text.to_string();
+        
+        result = self.animated_emoji_regex
+            .replace_all(&result, |caps: &regex::Captures| {
+                let emoji_name = &caps[1];
+                let emoji_id = &caps[2];
+                format!("<img data-mx-emoticon src=\"https://cdn.discordapp.com/emojis/{}.gif\" alt=\":{}:\" title=\":{}:\" height=\"32\" width=\"32\" />", 
+                    emoji_id, emoji_name, emoji_name)
+            })
+            .to_string();
+        
+        result = self.emoji_regex
+            .replace_all(&result, |caps: &regex::Captures| {
                 let emoji_name = &caps[1];
                 let emoji_id = &caps[2];
                 format!("<img data-mx-emoticon src=\"https://cdn.discordapp.com/emojis/{}.png\" alt=\":{}:\" title=\":{}:\" height=\"32\" width=\"32\" />", 
                     emoji_id, emoji_name, emoji_name)
             })
-            .to_string()
+            .to_string();
+        
+        result
+    }
+
+    pub async fn convert_emojis_to_html_with_cache(&self, text: &str) -> String {
+        let Some(handler) = &self.emoji_handler else {
+            return self.convert_emojis_to_html(text);
+        };
+
+        let mut result = text.to_string();
+
+        result = self.animated_emoji_regex
+            .replace_all(&result, |caps: &regex::Captures| {
+                format!("__ANIMATED_EMOJI_{}__", &caps[2])
+            })
+            .to_string();
+
+        result = self.emoji_regex
+            .replace_all(&result, |caps: &regex::Captures| {
+                format!("__STATIC_EMOJI_{}__", &caps[2])
+            })
+            .to_string();
+
+        let mut emoji_info: Vec<(String, String, bool)> = Vec::new();
+        for caps in self.emoji_regex.captures_iter(text) {
+            emoji_info.push((caps[1].to_string(), caps[2].to_string(), false));
+        }
+        for caps in self.animated_emoji_regex.captures_iter(text) {
+            emoji_info.push((caps[1].to_string(), caps[2].to_string(), true));
+        }
+
+        for (emoji_name, emoji_id, animated) in emoji_info {
+            let placeholder = if animated {
+                format!("__ANIMATED_EMOBIJI_{}__", emoji_id)
+            } else {
+                format!("__STATIC_EMOJI_{}__", emoji_id)
+            };
+
+            match handler.get_or_upload_emoji(&emoji_id, &emoji_name, animated).await {
+                Ok(mxc_url) => {
+                    let html = handler.emoji_to_matrix_html(&mxc_url, &emoji_name);
+                    result = result.replace(&placeholder, &html);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to upload emoji {} ({}): {}", emoji_name, emoji_id, e);
+                    let ext = if animated { "gif" } else { "png" };
+                    let fallback = format!(
+                        "<img data-mx-emoticon src=\"https://cdn.discordapp.com/emojis/{}.{}\" alt=\":{}:\" title=\":{}:\" height=\"32\" width=\"32\" />",
+                        emoji_id, ext, emoji_name, emoji_name
+                    );
+                    result = result.replace(&placeholder, &fallback);
+                }
+            }
+        }
+
+        result
+    }
+
+    pub async fn format_as_html_async(&self, message: &str) -> String {
+        let mut result = message.to_string();
+        
+        result = self.escape_html(&result);
+        
+        result = self.convert_code_blocks_to_html(&result);
+        result = self.convert_inline_code_to_html(&result);
+        
+        result = self.convert_discord_formatting_to_html(&result);
+        
+        result = self.convert_mentions_to_html(&result);
+        result = self.convert_channels_to_html(&result);
+        result = self.convert_roles_to_html(&result);
+        result = self.convert_emojis_to_html_with_cache(&result).await;
+        
+        result = self.convert_everyone_here_to_html(&result);
+        
+        result = self.convert_newlines_to_html(&result);
+        
+        result
     }
 
     fn convert_everyone_here(&self, text: &str) -> String {
@@ -300,7 +408,7 @@ impl DiscordToMatrixConverter {
         discord_message: &str,
         matrix_room_id: &str,
     ) -> Result<BridgeMessage> {
-        let formatted = self.format_as_html(discord_message);
+        let formatted = self.format_as_html_async(discord_message).await;
         
         Ok(BridgeMessage {
             source_platform: "discord".to_string(),
@@ -308,6 +416,26 @@ impl DiscordToMatrixConverter {
             source_id: format!("discord:{}", matrix_room_id),
             target_id: matrix_room_id.to_string(),
             content: self.format_for_matrix(discord_message),
+            formatted_content: Some(formatted),
+            timestamp: Utc::now().to_rfc3339(),
+            attachments: Vec::new(),
+        })
+    }
+
+    pub async fn convert_message_with_emoji_cache(
+        &self,
+        discord_message: &str,
+        matrix_room_id: &str,
+    ) -> Result<BridgeMessage> {
+        let formatted = self.format_as_html_async(discord_message).await;
+        let plain = self.format_for_matrix(discord_message);
+        
+        Ok(BridgeMessage {
+            source_platform: "discord".to_string(),
+            target_platform: "matrix".to_string(),
+            source_id: format!("discord:{}", matrix_room_id),
+            target_id: matrix_room_id.to_string(),
+            content: plain,
             formatted_content: Some(formatted),
             timestamp: Utc::now().to_rfc3339(),
             attachments: Vec::new(),
