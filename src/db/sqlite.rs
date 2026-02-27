@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
+use std::sync::Arc;
 
 use crate::db::schema_sqlite::{room_mappings, user_mappings};
 
@@ -119,23 +120,18 @@ struct UpdateUserMapping<'a> {
     updated_at: String,
 }
 
-fn with_connection<T, F>(conn: &mut SqliteConnection, operation: F) -> Result<T, DatabaseError>
-where
-    F: FnOnce(&mut SqliteConnection) -> Result<T, DatabaseError>,
-{
-    // SQLite doesn't support the same connection pooling as PostgreSQL
-    // We run the operation directly on the connection
-    operation(conn)
+fn establish_connection(path: &str) -> Result<SqliteConnection, DatabaseError> {
+    SqliteConnection::establish(path)
+        .map_err(|e| DatabaseError::Connection(e.to_string()))
 }
 
 pub struct SqliteRoomStore {
-    // SQLite uses a single connection for simplicity
-    // In production, you might want to use r2d2 for connection pooling
+    db_path: Arc<String>,
 }
 
 impl SqliteRoomStore {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(db_path: Arc<String>) -> Self {
+        Self { db_path }
     }
 }
 
@@ -146,9 +142,9 @@ impl super::RoomStore for SqliteRoomStore {
         channel_id: &str,
     ) -> Result<Option<RoomMapping>, DatabaseError> {
         let channel_id = channel_id.to_string();
+        let db_path = self.db_path.clone();
         tokio::task::spawn_blocking(move || {
-            let mut conn = SqliteConnection::establish(":memory:")
-                .map_err(|e| DatabaseError::Connection(e.to_string()))?;
+            let mut conn = establish_connection(&db_path)?;
             use crate::db::schema_sqlite::room_mappings::dsl::*;
             room_mappings
                 .filter(discord_channel_id.eq(channel_id))
@@ -168,9 +164,9 @@ impl super::RoomStore for SqliteRoomStore {
         room_id: &str,
     ) -> Result<Option<RoomMapping>, DatabaseError> {
         let room_id = room_id.to_string();
+        let db_path = self.db_path.clone();
         tokio::task::spawn_blocking(move || {
-            let mut conn = SqliteConnection::establish(":memory:")
-                .map_err(|e| DatabaseError::Connection(e.to_string()))?;
+            let mut conn = establish_connection(&db_path)?;
             use crate::db::schema_sqlite::room_mappings::dsl::*;
             room_mappings
                 .filter(matrix_room_id.eq(room_id))
@@ -187,9 +183,9 @@ impl super::RoomStore for SqliteRoomStore {
 
     async fn get_room_by_id(&self, mapping_id: i64) -> Result<Option<RoomMapping>, DatabaseError> {
         let mapping_id = mapping_id as i32;
+        let db_path = self.db_path.clone();
         tokio::task::spawn_blocking(move || {
-            let mut conn = SqliteConnection::establish(":memory:")
-                .map_err(|e| DatabaseError::Connection(e.to_string()))?;
+            let mut conn = establish_connection(&db_path)?;
             use crate::db::schema_sqlite::room_mappings::dsl::*;
             room_mappings
                 .filter(id.eq(mapping_id))
@@ -205,9 +201,9 @@ impl super::RoomStore for SqliteRoomStore {
     }
 
     async fn count_rooms(&self) -> Result<i64, DatabaseError> {
+        let db_path = self.db_path.clone();
         tokio::task::spawn_blocking(move || {
-            let mut conn = SqliteConnection::establish(":memory:")
-                .map_err(|e| DatabaseError::Connection(e.to_string()))?;
+            let mut conn = establish_connection(&db_path)?;
             use crate::db::schema_sqlite::room_mappings::dsl::*;
             room_mappings
                 .count()
@@ -223,9 +219,9 @@ impl super::RoomStore for SqliteRoomStore {
         limit: i64,
         offset: i64,
     ) -> Result<Vec<RoomMapping>, DatabaseError> {
+        let db_path = self.db_path.clone();
         tokio::task::spawn_blocking(move || {
-            let mut conn = SqliteConnection::establish(":memory:")
-                .map_err(|e| DatabaseError::Connection(e.to_string()))?;
+            let mut conn = establish_connection(&db_path)?;
             use crate::db::schema_sqlite::room_mappings::dsl::*;
             let results = room_mappings
                 .order(id.desc())
@@ -243,9 +239,9 @@ impl super::RoomStore for SqliteRoomStore {
 
     async fn create_room_mapping(&self, mapping: &RoomMapping) -> Result<(), DatabaseError> {
         let mapping = mapping.clone();
+        let db_path = self.db_path.clone();
         tokio::task::spawn_blocking(move || {
-            let mut conn = SqliteConnection::establish(":memory:")
-                .map_err(|e| DatabaseError::Connection(e.to_string()))?;
+            let mut conn = establish_connection(&db_path)?;
             let new_mapping = NewRoomMapping {
                 matrix_room_id: &mapping.matrix_room_id,
                 discord_channel_id: &mapping.discord_channel_id,
@@ -267,9 +263,9 @@ impl super::RoomStore for SqliteRoomStore {
 
     async fn update_room_mapping(&self, mapping: &RoomMapping) -> Result<(), DatabaseError> {
         let mapping = mapping.clone();
+        let db_path = self.db_path.clone();
         tokio::task::spawn_blocking(move || {
-            let mut conn = SqliteConnection::establish(":memory:")
-                .map_err(|e| DatabaseError::Connection(e.to_string()))?;
+            let mut conn = establish_connection(&db_path)?;
             let changes = UpdateRoomMapping {
                 matrix_room_id: &mapping.matrix_room_id,
                 discord_channel_id: &mapping.discord_channel_id,
@@ -290,9 +286,9 @@ impl super::RoomStore for SqliteRoomStore {
 
     async fn delete_room_mapping(&self, id: i64) -> Result<(), DatabaseError> {
         let id = id as i32;
+        let db_path = self.db_path.clone();
         tokio::task::spawn_blocking(move || {
-            let mut conn = SqliteConnection::establish(":memory:")
-                .map_err(|e| DatabaseError::Connection(e.to_string()))?;
+            let mut conn = establish_connection(&db_path)?;
             diesel::delete(room_mappings::table.filter(room_mappings::id.eq(id)))
                 .execute(&mut conn)
                 .map(|_| ())
@@ -304,12 +300,12 @@ impl super::RoomStore for SqliteRoomStore {
 }
 
 pub struct SqliteUserStore {
-    // SQLite uses a single connection for simplicity
+    db_path: Arc<String>,
 }
 
 impl SqliteUserStore {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(db_path: Arc<String>) -> Self {
+        Self { db_path }
     }
 }
 
@@ -320,9 +316,9 @@ impl super::UserStore for SqliteUserStore {
         discord_id: &str,
     ) -> Result<Option<UserMapping>, DatabaseError> {
         let discord_id = discord_id.to_string();
+        let db_path = self.db_path.clone();
         tokio::task::spawn_blocking(move || {
-            let mut conn = SqliteConnection::establish(":memory:")
-                .map_err(|e| DatabaseError::Connection(e.to_string()))?;
+            let mut conn = establish_connection(&db_path)?;
             use crate::db::schema_sqlite::user_mappings::dsl::*;
             user_mappings
                 .filter(discord_user_id.eq(discord_id))
@@ -339,9 +335,9 @@ impl super::UserStore for SqliteUserStore {
 
     async fn create_user_mapping(&self, mapping: &UserMapping) -> Result<(), DatabaseError> {
         let mapping = mapping.clone();
+        let db_path = self.db_path.clone();
         tokio::task::spawn_blocking(move || {
-            let mut conn = SqliteConnection::establish(":memory:")
-                .map_err(|e| DatabaseError::Connection(e.to_string()))?;
+            let mut conn = establish_connection(&db_path)?;
             let new_mapping = NewUserMapping {
                 matrix_user_id: &mapping.matrix_user_id,
                 discord_user_id: &mapping.discord_user_id,
@@ -364,9 +360,9 @@ impl super::UserStore for SqliteUserStore {
 
     async fn update_user_mapping(&self, mapping: &UserMapping) -> Result<(), DatabaseError> {
         let mapping = mapping.clone();
+        let db_path = self.db_path.clone();
         tokio::task::spawn_blocking(move || {
-            let mut conn = SqliteConnection::establish(":memory:")
-                .map_err(|e| DatabaseError::Connection(e.to_string()))?;
+            let mut conn = establish_connection(&db_path)?;
             let changes = UpdateUserMapping {
                 discord_username: &mapping.discord_username,
                 discord_discriminator: &mapping.discord_discriminator,
@@ -386,9 +382,9 @@ impl super::UserStore for SqliteUserStore {
 
     async fn delete_user_mapping(&self, id: i64) -> Result<(), DatabaseError> {
         let id = id as i32;
+        let db_path = self.db_path.clone();
         tokio::task::spawn_blocking(move || {
-            let mut conn = SqliteConnection::establish(":memory:")
-                .map_err(|e| DatabaseError::Connection(e.to_string()))?;
+            let mut conn = establish_connection(&db_path)?;
             diesel::delete(user_mappings::table.filter(user_mappings::id.eq(id)))
                 .execute(&mut conn)
                 .map(|_| ())

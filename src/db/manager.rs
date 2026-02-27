@@ -83,9 +83,10 @@ impl DatabaseManager {
             #[cfg(feature = "sqlite")]
             DbType::Sqlite => {
                 let path = config.sqlite_path().unwrap();
+                let path_arc = Arc::new(path.clone());
 
-                let room_store = Arc::new(SqliteRoomStore::new());
-                let user_store = Arc::new(SqliteUserStore::new());
+                let room_store = Arc::new(SqliteRoomStore::new(path_arc.clone()));
+                let user_store = Arc::new(SqliteUserStore::new(path_arc));
 
                 Ok(Self {
                     #[cfg(feature = "postgres")]
