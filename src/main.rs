@@ -66,9 +66,26 @@ async fn main() -> Result<()> {
         }
     });
 
+    tokio::pin!(web_handle);
+    tokio::pin!(bridge_handle);
+
     tokio::select! {
-        _ = web_handle => {},
-        _ = bridge_handle => {},
+        _ = tokio::signal::ctrl_c() => {
+            info!("received Ctrl+C, beginning shutdown");
+        },
+        _ = &mut web_handle => {
+            info!("web server task exited, beginning shutdown");
+        },
+        _ = &mut bridge_handle => {
+            info!("bridge task exited, beginning shutdown");
+        },
+    }
+
+    web_handle.abort();
+    bridge_handle.abort();
+
+    if let Err(err) = discord_client.stop().await {
+        error!("discord shutdown error: {}", err);
     }
 
     info!("matrix-discord bridge shutting down");

@@ -153,6 +153,31 @@ impl DiscordClient {
         Ok(())
     }
 
+    pub async fn stop(&self) -> Result<()> {
+        let mut state = self.login_state.lock().await;
+        if !state.is_logged_in {
+            return Ok(());
+        }
+
+        #[cfg(feature = "discord")]
+        if let Some(gateway_task) = state.gateway_task.take() {
+            gateway_task.abort();
+            match gateway_task.await {
+                Ok(()) => info!("discord gateway task exited"),
+                Err(join_err) if join_err.is_cancelled() => {
+                    info!("discord gateway task aborted")
+                }
+                Err(join_err) => {
+                    error!("discord gateway task join error: {join_err}");
+                }
+            }
+        }
+
+        state.is_logged_in = false;
+        info!("discord client stopped");
+        Ok(())
+    }
+
     pub async fn send_message(&self, channel_id: &str, content: &str) -> Result<String> {
         let _guard = self.send_lock.lock().await;
 
