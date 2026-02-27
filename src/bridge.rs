@@ -36,6 +36,13 @@ pub struct DiscordMessageContext {
     pub permissions: HashSet<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RedactionRequest {
+    room_id: String,
+    event_id: String,
+    reason: &'static str,
+}
+
 #[derive(Clone)]
 pub struct BridgeCore {
     matrix_client: Arc<MatrixAppservice>,
@@ -724,12 +731,10 @@ impl BridgeCore {
             return Ok(());
         };
 
+        let request = build_discord_delete_redaction_request(&link);
+
         self.matrix_client
-            .redact_message(
-                &link.matrix_room_id,
-                &link.matrix_event_id,
-                Some("Deleted on Discord"),
-            )
+            .redact_message(&request.room_id, &request.event_id, Some(request.reason))
             .await?;
         self.db_manager
             .message_store()
@@ -948,11 +953,22 @@ fn apply_message_relation_mappings(
     }
 }
 
+fn build_discord_delete_redaction_request(link: &MessageMapping) -> RedactionRequest {
+    RedactionRequest {
+        room_id: link.matrix_room_id.clone(),
+        event_id: link.matrix_event_id.clone(),
+        reason: "Deleted on Discord",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
 
-    use super::{apply_message_relation_mappings, OutboundMatrixMessage};
+    use super::{
+        apply_message_relation_mappings, build_discord_delete_redaction_request,
+        OutboundMatrixMessage,
+    };
     use crate::db::MessageMapping;
 
     fn mapping(discord_message_id: &str, matrix_event_id: &str) -> MessageMapping {
@@ -997,5 +1013,16 @@ mod tests {
 
         assert_eq!(outbound.reply_to, Some("discord-reply-id".to_string()));
         assert_eq!(outbound.edit_of, Some("discord-edit-id".to_string()));
+    }
+
+    #[test]
+    fn build_discord_delete_redaction_request_maps_fields() {
+        let link = mapping("discord-msg-1", "$matrix-event-1");
+
+        let request = build_discord_delete_redaction_request(&link);
+
+        assert_eq!(request.room_id, "!room:example.org");
+        assert_eq!(request.event_id, "$matrix-event-1");
+        assert_eq!(request.reason, "Deleted on Discord");
     }
 }
