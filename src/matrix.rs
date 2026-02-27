@@ -437,6 +437,33 @@ impl MatrixAppservice {
         Ok(())
     }
 
+    pub async fn send_text(&self, room_id: &str, content: &str) -> Result<()> {
+        self.appservice.client.send_text(room_id, content).await?;
+        Ok(())
+    }
+
+    pub async fn get_joined_rooms(&self) -> Result<Vec<String>> {
+        let rooms = self.appservice.client.get_joined_rooms().await?;
+        Ok(rooms)
+    }
+
+    pub async fn get_room_members(&self, room_id: &str) -> Result<Vec<String>> {
+        let members = self.appservice.client.get_room_members(room_id, None, None).await?;
+        Ok(members.into_iter().map(|m| m.user_id).collect())
+    }
+
+    pub async fn create_dm_room(&self, invite_user: &str) -> Result<String> {
+        use matrix_bot_sdk::models::CreateRoom;
+        let options = CreateRoom {
+            visibility: Some("private".to_string()),
+            invite: vec![invite_user.to_string()],
+            is_direct: true,
+            ..Default::default()
+        };
+        let room_id = self.appservice.client.create_room(&options).await?;
+        Ok(room_id)
+    }
+
     pub fn registration_preview(&self) -> Value {
         json!({
             "id": self.config.registration.bridge_id,
