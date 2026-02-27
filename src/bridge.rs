@@ -43,6 +43,16 @@ struct RedactionRequest {
     reason: &'static str,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TypingRequest {
+    room_id: String,
+    discord_user_id: String,
+    typing: bool,
+    timeout_ms: Option<u64>,
+}
+
+const DISCORD_TYPING_TIMEOUT_MS: u64 = 4000;
+
 #[derive(Clone)]
 pub struct BridgeCore {
     matrix_client: Arc<MatrixAppservice>,
@@ -765,8 +775,15 @@ impl BridgeCore {
             .ensure_ghost_user_registered(discord_sender_id, None)
             .await?;
 
+        let request = build_discord_typing_request(&mapping.matrix_room_id, discord_sender_id);
+
         self.matrix_client
-            .set_discord_user_typing(&mapping.matrix_room_id, discord_sender_id, true, Some(4000))
+            .set_discord_user_typing(
+                &request.room_id,
+                &request.discord_user_id,
+                request.typing,
+                request.timeout_ms,
+            )
             .await?;
 
         debug!(
@@ -961,12 +978,22 @@ fn build_discord_delete_redaction_request(link: &MessageMapping) -> RedactionReq
     }
 }
 
+fn build_discord_typing_request(matrix_room_id: &str, discord_user_id: &str) -> TypingRequest {
+    TypingRequest {
+        room_id: matrix_room_id.to_string(),
+        discord_user_id: discord_user_id.to_string(),
+        typing: true,
+        timeout_ms: Some(DISCORD_TYPING_TIMEOUT_MS),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
 
     use super::{
         apply_message_relation_mappings, build_discord_delete_redaction_request,
+        build_discord_typing_request,
         OutboundMatrixMessage,
     };
     use crate::db::MessageMapping;
@@ -1024,5 +1051,21 @@ mod tests {
         assert_eq!(request.room_id, "!room:example.org");
         assert_eq!(request.event_id, "$matrix-event-1");
         assert_eq!(request.reason, "Deleted on Discord");
+    }
+
+    #[test]
+    fn build_discord_typing_request_maps_fields() {
+        let request = build_discord_typing_request("!room:example.org", "discord-user-1");
+
+        assert_eq!(request.room_id, "!room:example.org");
+        assert_eq!(request.discord_user_id, "discord-user-1");
+        assert!(request.typing);
+        assert_eq!(request.timeout_ms, Some(4000));
+    }
+
+    #[test]
+    fn build_discord_typing_request_uses_constant_timeout() {
+        let request = build_discord_typing_request("!room:example.org", "discord-user-2");
+        assert_eq!(request.timeout_ms, Some(super::DISCORD_TYPING_TIMEOUT_MS));
     }
 }
