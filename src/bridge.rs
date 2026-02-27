@@ -122,7 +122,6 @@ impl BridgeCore {
                     .process_next(self.matrix_client.as_ref())
                     .await?;
             }
-            debug!("bridge heartbeat");
         }
     }
 
