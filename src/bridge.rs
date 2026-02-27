@@ -262,8 +262,164 @@ impl BridgeCore {
             outbound.content.len(),
             preview_text(&outbound.content)
         );
-        self.send_to_discord_message_as_user(&mapping.discord_channel_id, outbound, &event.sender)
+        
+        let downloaded_attachments = self.download_matrix_attachments(&outbound.attachments).await;
+        
+        self.send_to_discord_with_attachments(&mapping.discord_channel_id, outbound, &event.sender, downloaded_attachments)
             .await?;
+        Ok(())
+    }
+
+    async fn download_matrix_attachments(&self, urls: &[String]) -> Vec<(String, Option<crate::media::MediaInfo>)> {
+        let mut results = Vec::new();
+        for url in urls {
+            if url.starts_with("mxc://") {
+                match self.media_handler.download_matrix_media(url).await {
+                    Ok(media) => {
+                        if media.size > 8 * 1024 * 1024 {
+                            warn!(
+                                "matrix attachment too large for discord: {} bytes, sending URL instead",
+                                media.size
+                            );
+                            results.push((url.clone(), None));
+                        } else {
+                            results.push((url.clone(), Some(media)));
+                        }
+                    }
+                    Err(e) => {
+                        warn!("failed to download matrix attachment {}: {}", url, e);
+                        results.push((url.clone(), None));
+                    }
+                }
+            } else {
+                results.push((url.clone(), None));
+            }
+        }
+        results
+    }
+
+    pub async fn send_to_discord_with_attachments(
+        &self,
+        discord_channel_id: &str,
+        outbound: OutboundDiscordMessage,
+        matrix_sender: &str,
+        attachments: Vec<(String, Option<crate::media::MediaInfo>)>,
+    ) -> Result<()> {
+        let (username, avatar_url) = self.matrix_client
+            .get_user_profile(matrix_sender)
+            .await
+            .unwrap_or(None)
+            .unwrap_or_else(|| (matrix_sender.to_string(), None));
+
+        let avatar_for_discord = avatar_url.as_ref().and_then(|url| {
+            if url.starts_with("mxc://") {
+                let mxc_url = url.trim_start_matches("mxc://");
+                let homeserver = &self.matrix_client.config().bridge.homeserver_url;
+                Some(format!("{}/_matrix/media/r0/download/{}", homeserver.trim_end_matches('/'), mxc_url))
+            } else {
+                Some(url.to_string())
+            }
+        });
+
+        let mut last_message_id: Option<String> = None;
+
+        for (original_url, media_opt) in &attachments {
+            if let Some(media) = media_opt {
+                if media.size > 8 * 1024 * 1024 {
+                    warn!(
+                        "matrix attachment too large for discord: {} bytes, sending URL instead",
+                        media.size
+                    );
+                    let content = format!("{}: {}", media.filename, original_url);
+                    last_message_id = Some(
+                        self.discord_client
+                            .send_message_with_metadata_as_user(
+                                discord_channel_id,
+                                &content,
+                                &[],
+                                None,
+                                None,
+                                Some(&username),
+                                avatar_for_discord.as_deref(),
+                            )
+                            .await?,
+                    );
+                } else {
+                    match self.discord_client
+                        .send_file_as_user(
+                            discord_channel_id,
+                            &media.data,
+                            &media.content_type,
+                            &media.filename,
+                            Some(&username),
+                            avatar_for_discord.as_deref(),
+                        )
+                        .await
+                    {
+                        Ok(msg_id) => {
+                            info!(
+                                "uploaded matrix attachment to discord channel={} file={} size={}",
+                                discord_channel_id, media.filename, media.size
+                            );
+                            last_message_id = Some(msg_id);
+                        }
+                        Err(e) => {
+                            warn!("failed to upload attachment to discord: {}, sending URL instead", e);
+                            let content = format!("{}: {}", media.filename, original_url);
+                            last_message_id = Some(
+                                self.discord_client
+                                    .send_message_with_metadata_as_user(
+                                        discord_channel_id,
+                                        &content,
+                                        &[],
+                                        None,
+                                        None,
+                                        Some(&username),
+                                        avatar_for_discord.as_deref(),
+                                    )
+                                    .await?,
+                            );
+                        }
+                    }
+                }
+            } else {
+                let content = if original_url.starts_with("http") {
+                    format!("Attachment: {}", original_url)
+                } else {
+                    format!("Attachment: {}", original_url)
+                };
+                last_message_id = Some(
+                    self.discord_client
+                        .send_message_with_metadata_as_user(
+                            discord_channel_id,
+                            &content,
+                            &[],
+                            None,
+                            None,
+                            Some(&username),
+                            avatar_for_discord.as_deref(),
+                        )
+                        .await?,
+                );
+            }
+        }
+
+        if !outbound.content.is_empty() {
+            last_message_id = Some(
+                self.discord_client
+                    .send_message_with_metadata_as_user(
+                        discord_channel_id,
+                        &outbound.content,
+                        &[],
+                        outbound.reply_to.as_deref(),
+                        outbound.edit_of.as_deref(),
+                        Some(&username),
+                        avatar_for_discord.as_deref(),
+                    )
+                    .await?,
+            );
+        }
+
         Ok(())
     }
 

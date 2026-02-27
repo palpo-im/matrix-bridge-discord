@@ -10,7 +10,7 @@ use serenity::all::{
     Client as SerenityClient, Context as SerenityContext, EventHandler as SerenityEventHandler,
     ChannelId, GatewayIntents, GuildId, Http, Message as SerenityMessage, MessageId,
     MessageUpdateEvent, OnlineStatus, Permissions, Presence, Ready, TypingStartEvent,
-    Webhook, WebhookType,
+    Webhook, WebhookType, ExecuteWebhook, CreateAttachment, CreateMessage,
 };
 use tokio::sync::{RwLock, oneshot, Mutex as AsyncMutex};
 
@@ -774,6 +774,105 @@ impl DiscordClient {
             .map_err(|e| anyhow!("direct message send failed: {}", e))?;
 
         info!("sent message directly to channel {}, message_id={}", channel_id, message.id);
+        Ok(message.id.to_string())
+    }
+
+    pub async fn send_file_as_user(
+        &self,
+        channel_id: &str,
+        data: &[u8],
+        _content_type: &str,
+        filename: &str,
+        username: Option<&str>,
+        avatar_url: Option<&str>,
+    ) -> Result<String> {
+        debug!(
+            "Discord send file channel={} filename={} size={} username={:?}",
+            channel_id,
+            filename,
+            data.len(),
+            username
+        );
+
+        let _guard = self.send_lock.lock().await;
+
+        let delay = self._config.limits.discord_send_delay;
+        if delay > 0 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(delay)).await;
+        }
+
+        let http_guard = self.http.read().await;
+        let Some(http) = http_guard.as_ref() else {
+            warn!("discord http client not available");
+            return Err(anyhow!("discord http client not available"));
+        };
+
+        let channel_id_num: u64 = channel_id.parse()
+            .map_err(|_| anyhow!("invalid channel id: {}", channel_id))?;
+
+        if self._config.channel.enable_webhook && username.is_some() {
+            match self.get_or_create_webhook(http, channel_id_num).await {
+                Ok(webhook_info) => {
+                    return self.send_file_via_webhook(
+                        http,
+                        &webhook_info,
+                        data,
+                        filename,
+                        username.unwrap(),
+                        avatar_url,
+                    ).await;
+                }
+                Err(err) => {
+                    warn!("failed to get/create webhook for file, falling back: {}", err);
+                }
+            }
+        }
+
+        let channel = ChannelId::new(channel_id_num);
+        let attachment = CreateAttachment::bytes(data.to_vec(), filename);
+
+        let message = channel
+            .send_message(http, CreateMessage::new().add_file(attachment))
+            .await
+            .map_err(|e| anyhow!("failed to send file to discord: {}", e))?;
+
+        info!("sent file to channel {}, message_id={}", channel_id, message.id);
+        Ok(message.id.to_string())
+    }
+
+    async fn send_file_via_webhook(
+        &self,
+        http: &Http,
+        webhook_info: &WebhookInfo,
+        data: &[u8],
+        filename: &str,
+        username: &str,
+        avatar_url: Option<&str>,
+    ) -> Result<String> {
+        let webhook_url = format!(
+            "https://discord.com/api/webhooks/{}/{}",
+            webhook_info.id, webhook_info.token
+        );
+
+        let webhook = Webhook::from_url(http, &webhook_url).await
+            .map_err(|e| anyhow!("failed to parse webhook url: {}", e))?;
+
+        let attachment = CreateAttachment::bytes(data.to_vec(), filename);
+
+        let mut builder = ExecuteWebhook::new()
+            .username(username);
+
+        if let Some(avatar) = avatar_url {
+            builder = builder.avatar_url(avatar);
+        }
+
+        builder = builder.add_file(attachment);
+
+        let message = webhook.execute(http, false, builder).await
+            .map_err(|e| anyhow!("webhook file send failed: {}", e))?
+            .ok_or_else(|| anyhow!("webhook execution returned no message"))?;
+
+        info!("sent file via webhook to channel, message_id={}", message.id);
         Ok(message.id.to_string())
     }
 
