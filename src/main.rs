@@ -42,6 +42,8 @@ async fn main() -> Result<()> {
         db_manager.clone(),
     ));
 
+    discord_client.set_bridge(bridge.clone()).await;
+
     event_handler.set_bridge(bridge.clone());
     let processor = Arc::new(matrix::MatrixEventProcessor::new(Arc::new(event_handler)));
     matrix_client.set_processor(processor).await;

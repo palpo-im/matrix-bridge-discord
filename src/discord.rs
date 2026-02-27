@@ -6,10 +6,12 @@ use tracing::{debug, error, info};
 
 use serenity::all::{
     Client as SerenityClient, Context as SerenityContext, EventHandler as SerenityEventHandler,
-    GatewayIntents, Ready,
+    GatewayIntents, Message as SerenityMessage, OnlineStatus, Permissions, Presence, Ready,
 };
-use tokio::sync::oneshot;
+use tokio::sync::{RwLock, oneshot};
 
+use crate::bridge::presence_handler::{DiscordActivity, DiscordPresence, DiscordPresenceState};
+use crate::bridge::{BridgeCore, DiscordMessageContext};
 use crate::config::Config;
 
 pub mod command_handler;
@@ -49,6 +51,7 @@ pub struct DiscordClient {
     _config: Arc<Config>,
     send_lock: Arc<tokio::sync::Mutex<()>>,
     login_state: Arc<tokio::sync::Mutex<DiscordLoginState>>,
+    bridge: Arc<RwLock<Option<Arc<BridgeCore>>>>,
 }
 
 #[derive(Default)]
@@ -59,6 +62,7 @@ struct DiscordLoginState {
 
 struct ReadySignalHandler {
     ready_sender: Arc<tokio::sync::Mutex<Option<oneshot::Sender<()>>>>,
+    bridge: Arc<RwLock<Option<Arc<BridgeCore>>>>,
 }
 
 #[serenity::async_trait]
@@ -72,6 +76,97 @@ impl SerenityEventHandler for ReadySignalHandler {
             let _ = sender.send(());
         }
     }
+
+    async fn message(&self, _ctx: SerenityContext, msg: SerenityMessage) {
+        if msg.author.bot {
+            return;
+        }
+
+        let bridge = self.bridge.read().await.clone();
+        let Some(bridge) = bridge else {
+            debug!("ignoring discord message before bridge binding");
+            return;
+        };
+
+        let reply_to = msg.referenced_message.as_ref().map(|m| m.id.to_string());
+        let attachments = msg.attachments.iter().map(|a| a.url.clone()).collect();
+
+        let permission_flags = msg
+            .member
+            .as_ref()
+            .and_then(|member| member.permissions)
+            .unwrap_or_else(Permissions::empty);
+
+        let permissions = permissions_to_names(permission_flags);
+
+        if let Err(err) = bridge
+            .handle_discord_message_with_context(DiscordMessageContext {
+                channel_id: msg.channel_id.to_string(),
+                sender_id: msg.author.id.to_string(),
+                content: msg.content.clone(),
+                attachments,
+                reply_to,
+                edit_of: None,
+                permissions,
+            })
+            .await
+        {
+            error!("failed to handle discord message: {err}");
+        }
+    }
+
+    async fn presence_update(&self, _ctx: SerenityContext, new_data: Presence) {
+        let bridge = self.bridge.read().await.clone();
+        let Some(bridge) = bridge else {
+            return;
+        };
+
+        if new_data.user.bot.unwrap_or(false) {
+            return;
+        }
+
+        let state = match new_data.status {
+            OnlineStatus::Online => DiscordPresenceState::Online,
+            OnlineStatus::DoNotDisturb => DiscordPresenceState::Dnd,
+            OnlineStatus::Idle => DiscordPresenceState::Idle,
+            OnlineStatus::Offline | OnlineStatus::Invisible => DiscordPresenceState::Offline,
+            _ => DiscordPresenceState::Offline,
+        };
+
+        let activities = new_data
+            .activities
+            .iter()
+            .map(|activity| DiscordActivity {
+                kind: format!("{:?}", activity.kind),
+                name: activity.name.clone(),
+                url: activity.url.as_ref().map(ToString::to_string),
+            })
+            .collect();
+
+        bridge.enqueue_discord_presence(DiscordPresence {
+            user_id: new_data.user.id.to_string(),
+            username: new_data.user.name.clone(),
+            state,
+            activities,
+        });
+    }
+}
+
+fn permissions_to_names(perms: Permissions) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+    if perms.contains(Permissions::MANAGE_WEBHOOKS) {
+        names.insert("MANAGE_WEBHOOKS".to_string());
+    }
+    if perms.contains(Permissions::MANAGE_CHANNELS) {
+        names.insert("MANAGE_CHANNELS".to_string());
+    }
+    if perms.contains(Permissions::BAN_MEMBERS) {
+        names.insert("BAN_MEMBERS".to_string());
+    }
+    if perms.contains(Permissions::KICK_MEMBERS) {
+        names.insert("KICK_MEMBERS".to_string());
+    }
+    names
 }
 
 impl DiscordClient {
@@ -81,7 +176,12 @@ impl DiscordClient {
             _config: config,
             send_lock: Arc::new(tokio::sync::Mutex::new(())),
             login_state: Arc::new(tokio::sync::Mutex::new(DiscordLoginState::default())),
+            bridge: Arc::new(RwLock::new(None)),
         })
+    }
+
+    pub async fn set_bridge(&self, bridge: Arc<BridgeCore>) {
+        *self.bridge.write().await = Some(bridge);
     }
 
     pub async fn login(&self) -> Result<()> {
@@ -99,6 +199,7 @@ impl DiscordClient {
         let (ready_tx, ready_rx) = oneshot::channel();
         let event_handler = ReadySignalHandler {
             ready_sender: Arc::new(tokio::sync::Mutex::new(Some(ready_tx))),
+            bridge: self.bridge.clone(),
         };
 
         let mut gateway_client = SerenityClient::builder(&self._config.auth.bot_token, intents)

@@ -34,3 +34,4 @@ __pycache__/
 .pytest_cache/
 .claude/
 nul
+_diff.md
