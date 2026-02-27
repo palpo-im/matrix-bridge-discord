@@ -758,15 +758,18 @@ impl BridgeCore {
         discord_channel_id: &str,
         discord_sender_id: &str,
     ) -> Result<()> {
-        if self.matrix_client.config().bridge.disable_typing_notifications {
-            return Ok(());
-        }
+        let disable_typing_notifications = self.matrix_client.config().bridge.disable_typing_notifications;
 
         let room_mapping = self
             .db_manager
             .room_store()
             .get_room_by_discord_channel(discord_channel_id)
             .await?;
+
+        if !should_forward_discord_typing(disable_typing_notifications, room_mapping.as_ref()) {
+            return Ok(());
+        }
+
         let Some(mapping) = room_mapping else {
             return Ok(());
         };
@@ -987,16 +990,23 @@ fn build_discord_typing_request(matrix_room_id: &str, discord_user_id: &str) -> 
     }
 }
 
+fn should_forward_discord_typing(
+    disable_typing_notifications: bool,
+    room_mapping: Option<&RoomMapping>,
+) -> bool {
+    !disable_typing_notifications && room_mapping.is_some()
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
 
     use super::{
         apply_message_relation_mappings, build_discord_delete_redaction_request,
-        build_discord_typing_request,
+        build_discord_typing_request, should_forward_discord_typing,
         OutboundMatrixMessage,
     };
-    use crate::db::MessageMapping;
+    use crate::db::{MessageMapping, RoomMapping};
 
     fn mapping(discord_message_id: &str, matrix_event_id: &str) -> MessageMapping {
         MessageMapping {
@@ -1067,5 +1077,37 @@ mod tests {
     fn build_discord_typing_request_uses_constant_timeout() {
         let request = build_discord_typing_request("!room:example.org", "discord-user-2");
         assert_eq!(request.timeout_ms, Some(super::DISCORD_TYPING_TIMEOUT_MS));
+    }
+
+    fn room_mapping() -> RoomMapping {
+        RoomMapping {
+            id: 1,
+            matrix_room_id: "!room:example.org".to_string(),
+            discord_channel_id: "123".to_string(),
+            discord_channel_name: "general".to_string(),
+            discord_guild_id: "456".to_string(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn should_forward_discord_typing_returns_false_when_disabled() {
+        let mapping = room_mapping();
+        let should_forward = should_forward_discord_typing(true, Some(&mapping));
+        assert!(!should_forward);
+    }
+
+    #[test]
+    fn should_forward_discord_typing_returns_false_without_mapping() {
+        let should_forward = should_forward_discord_typing(false, None);
+        assert!(!should_forward);
+    }
+
+    #[test]
+    fn should_forward_discord_typing_returns_true_when_enabled_and_mapped() {
+        let mapping = room_mapping();
+        let should_forward = should_forward_discord_typing(false, Some(&mapping));
+        assert!(should_forward);
     }
 }
