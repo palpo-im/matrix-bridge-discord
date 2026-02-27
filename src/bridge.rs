@@ -734,6 +734,38 @@ impl BridgeCore {
         Ok(())
     }
 
+    pub async fn handle_discord_typing(
+        &self,
+        discord_channel_id: &str,
+        discord_sender_id: &str,
+    ) -> Result<()> {
+        if self.matrix_client.config().bridge.disable_typing_notifications {
+            return Ok(());
+        }
+
+        let room_mapping = self
+            .db_manager
+            .room_store()
+            .get_room_by_discord_channel(discord_channel_id)
+            .await?;
+        let Some(mapping) = room_mapping else {
+            return Ok(());
+        };
+
+        self.matrix_client
+            .ensure_ghost_user_registered(discord_sender_id, None)
+            .await?;
+
+        debug!(
+            "discord typing observed channel_id={} sender={} mapped_room={} (typing forwarding placeholder)",
+            discord_channel_id,
+            discord_sender_id,
+            mapping.matrix_room_id
+        );
+
+        Ok(())
+    }
+
     async fn handle_discord_command_outcome(
         &self,
         outcome: DiscordCommandOutcome,

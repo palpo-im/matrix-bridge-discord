@@ -7,7 +7,7 @@ use tracing::{debug, error, info};
 use serenity::all::{
     Client as SerenityClient, Context as SerenityContext, EventHandler as SerenityEventHandler,
     ChannelId, GatewayIntents, GuildId, Message as SerenityMessage, MessageId,
-    MessageUpdateEvent, OnlineStatus, Permissions, Presence, Ready,
+    MessageUpdateEvent, OnlineStatus, Permissions, Presence, Ready, TypingStartEvent,
 };
 use tokio::sync::{RwLock, oneshot};
 
@@ -222,6 +222,45 @@ impl SerenityEventHandler for ReadySignalHandler {
             .await
         {
             error!("failed to handle discord message delete: {err}");
+        }
+    }
+
+    async fn message_delete_bulk(
+        &self,
+        _ctx: SerenityContext,
+        channel_id: ChannelId,
+        deleted_messages_ids: Vec<MessageId>,
+        _guild_id: Option<GuildId>,
+    ) {
+        let bridge = self.bridge.read().await.clone();
+        let Some(bridge) = bridge else {
+            return;
+        };
+
+        for message_id in deleted_messages_ids {
+            if let Err(err) = bridge
+                .handle_discord_message_delete(&channel_id.to_string(), &message_id.to_string())
+                .await
+            {
+                error!(
+                    "failed to handle discord bulk message delete for {}: {err}",
+                    message_id
+                );
+            }
+        }
+    }
+
+    async fn typing_start(&self, _ctx: SerenityContext, event: TypingStartEvent) {
+        let bridge = self.bridge.read().await.clone();
+        let Some(bridge) = bridge else {
+            return;
+        };
+
+        if let Err(err) = bridge
+            .handle_discord_typing(&event.channel_id.to_string(), &event.user_id.to_string())
+            .await
+        {
+            error!("failed to handle discord typing event: {err}");
         }
     }
 }
