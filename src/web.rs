@@ -4,7 +4,6 @@ use std::time::Instant;
 use anyhow::Result;
 use once_cell::sync::OnceCell;
 use salvo::prelude::*;
-use salvo::prelude::*;
 use tracing::info;
 
 use crate::bridge::BridgeCore;
@@ -13,9 +12,11 @@ use crate::db::DatabaseManager;
 use crate::matrix::MatrixAppservice;
 
 mod health;
+mod metrics;
 mod provisioning;
 
 use health::{get_status, health_check};
+use metrics::metrics_endpoint;
 use provisioning::{create_bridge, delete_bridge, get_bridge_info, list_rooms};
 
 #[derive(Clone)]
@@ -80,6 +81,7 @@ pub fn root_router() -> Router {
     Router::new()
         .push(Router::with_path("health").get(health_check))
         .push(Router::with_path("status").get(get_status))
+        .push(Router::with_path("metrics").get(metrics_endpoint))
         .push(
             Router::with_path("_matrix/app/v1")
                 .push(Router::with_path("rooms").get(list_rooms))
