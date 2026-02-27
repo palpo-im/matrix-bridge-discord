@@ -432,6 +432,11 @@ impl MatrixAppservice {
         Ok(())
     }
 
+    pub async fn leave_room(&self, room_id: &str) -> Result<()> {
+        self.appservice.client.leave_room(room_id, None).await?;
+        Ok(())
+    }
+
     pub fn registration_preview(&self) -> Value {
         json!({
             "id": self.config.registration.bridge_id,

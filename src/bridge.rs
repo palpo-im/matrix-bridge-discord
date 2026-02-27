@@ -333,6 +333,44 @@ impl BridgeCore {
         Ok(())
     }
 
+    pub async fn handle_matrix_encryption(&self, event: &MatrixEvent) -> Result<()> {
+        let room_mapping = self
+            .db_manager
+            .room_store()
+            .get_room_by_matrix_room(&event.room_id)
+            .await?;
+
+        let Some(mapping) = room_mapping else {
+            debug!(
+                "matrix encryption ignored room_id={} reason=no_discord_mapping",
+                event.room_id
+            );
+            return Ok(());
+        };
+
+        info!(
+            "encryption enabled in room {}, leaving to prevent message sync issues",
+            event.room_id
+        );
+
+        self.matrix_client
+            .send_notice(
+                &event.room_id,
+                "You have turned on encryption in this room, so the service will not bridge any new messages.",
+            )
+            .await?;
+
+        self.matrix_client.leave_room(&event.room_id).await?;
+
+        self.db_manager
+            .room_store()
+            .delete_room_mapping(mapping.id)
+            .await?;
+
+        info!("removed room mapping for encrypted room {}", event.room_id);
+        Ok(())
+    }
+
     pub async fn request_bridge_matrix_room(
         &self,
         matrix_room_id: &str,
