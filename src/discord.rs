@@ -108,7 +108,7 @@ impl SerenityEventHandler for ReadySignalHandler {
         }
     }
 
-    async fn message(&self, _ctx: SerenityContext, msg: SerenityMessage) {
+    async fn message(&self, ctx: SerenityContext, msg: SerenityMessage) {
         if msg.author.bot {
             return;
         }
@@ -134,9 +134,8 @@ impl SerenityEventHandler for ReadySignalHandler {
         let attachments = msg.attachments.iter().map(|a| a.url.clone()).collect();
 
         let permission_flags = msg
-            .member
-            .as_ref()
-            .and_then(|member| member.permissions)
+            .author_permissions(&ctx.cache)
+            .or_else(|| msg.member.as_ref().and_then(|member| member.permissions))
             .unwrap_or_else(Permissions::empty);
 
         let permissions = permissions_to_names(permission_flags);
@@ -464,6 +463,14 @@ impl SerenityEventHandler for ReadySignalHandler {
 
 fn permissions_to_names(perms: Permissions) -> std::collections::HashSet<String> {
     let mut names = std::collections::HashSet::new();
+    // Discord's ADMINISTRATOR bit bypasses channel-level checks, so treat it
+    // as granting the command permissions this bridge requires.
+    if perms.contains(Permissions::ADMINISTRATOR) {
+        names.insert("MANAGE_WEBHOOKS".to_string());
+        names.insert("MANAGE_CHANNELS".to_string());
+        names.insert("BAN_MEMBERS".to_string());
+        names.insert("KICK_MEMBERS".to_string());
+    }
     if perms.contains(Permissions::MANAGE_WEBHOOKS) {
         names.insert("MANAGE_WEBHOOKS".to_string());
     }
@@ -1154,6 +1161,15 @@ mod tests {
     fn permissions_to_names_ignores_unmapped_flags() {
         let names = permissions_to_names(Permissions::SEND_MESSAGES);
         assert!(names.is_empty());
+    }
+
+    #[test]
+    fn permissions_to_names_maps_administrator_to_command_permissions() {
+        let names = permissions_to_names(Permissions::ADMINISTRATOR);
+        assert!(names.contains("MANAGE_WEBHOOKS"));
+        assert!(names.contains("MANAGE_CHANNELS"));
+        assert!(names.contains("BAN_MEMBERS"));
+        assert!(names.contains("KICK_MEMBERS"));
     }
 
     #[test]
