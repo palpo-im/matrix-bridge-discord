@@ -289,38 +289,14 @@ impl BridgeCore {
         );
         
         let downloaded_attachments = self.download_matrix_attachments(&outbound.attachments).await;
-        
-        let (displayname, avatar_url) = self.matrix_client
-            .get_user_profile(&event.sender)
-            .await
-            .unwrap_or(None)
-            .unwrap_or_else(|| (event.sender.clone(), None));
 
-        let avatar_for_embed = avatar_url.as_deref().and_then(|url| {
-            if url.starts_with("mxc://") {
-                let mxc_url = url.trim_start_matches("mxc://");
-                let homeserver = &self.matrix_client.config().bridge.homeserver_url;
-                Some(format!("{}/_matrix/media/r0/download/{}", homeserver.trim_end_matches('/'), mxc_url))
-            } else {
-                Some(url.to_string())
-            }
-        });
-
-        let reply_info = if let Some(ref reply_event_id) = outbound.reply_to {
-            self.get_reply_info(reply_event_id).await
-        } else {
-            None
-        };
-
-        let outbound_with_embed = self.message_flow.matrix_to_discord_with_embed(
-            &message,
-            &displayname,
-            avatar_for_embed.as_deref(),
-            reply_info.as_ref().map(|(s, b)| (s.as_str(), b.as_str())),
-        );
-
-        self.send_to_discord_with_embed(&mapping.discord_channel_id, outbound_with_embed, downloaded_attachments)
-            .await?;
+        self.send_to_discord_with_attachments(
+            &mapping.discord_channel_id,
+            outbound,
+            &event.sender,
+            downloaded_attachments,
+        )
+        .await?;
         Ok(())
     }
 
