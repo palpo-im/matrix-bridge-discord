@@ -336,6 +336,23 @@ impl MatrixAppservice {
         Ok(())
     }
 
+    pub async fn set_discord_user_typing(
+        &self,
+        room_id: &str,
+        discord_user_id: &str,
+        typing: bool,
+        timeout_ms: Option<u64>,
+    ) -> Result<()> {
+        let localpart = format!("_discord_{}", discord_user_id);
+        let user_id = format!("@{}:{}", localpart, self.config.bridge.domain);
+
+        self.appservice
+            .client
+            .set_typing(room_id, &user_id, typing, timeout_ms)
+            .await?;
+        Ok(())
+    }
+
     pub async fn set_room_alias(&self, room_id: &str, alias: &str) -> Result<()> {
         self.appservice
             .client

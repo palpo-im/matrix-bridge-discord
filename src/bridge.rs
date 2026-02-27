@@ -756,8 +756,12 @@ impl BridgeCore {
             .ensure_ghost_user_registered(discord_sender_id, None)
             .await?;
 
+        self.matrix_client
+            .set_discord_user_typing(&mapping.matrix_room_id, discord_sender_id, true, Some(4000))
+            .await?;
+
         debug!(
-            "discord typing observed channel_id={} sender={} mapped_room={} (typing forwarding placeholder)",
+            "discord typing forwarded channel_id={} sender={} mapped_room={}",
             discord_channel_id,
             discord_sender_id,
             mapping.matrix_room_id
