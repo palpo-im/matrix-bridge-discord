@@ -4,12 +4,10 @@ use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info};
 
-#[cfg(feature = "discord")]
 use serenity::all::{
     Client as SerenityClient, Context as SerenityContext, EventHandler as SerenityEventHandler,
     GatewayIntents, Ready,
 };
-#[cfg(feature = "discord")]
 use tokio::sync::oneshot;
 
 use crate::config::Config;
@@ -56,16 +54,13 @@ pub struct DiscordClient {
 #[derive(Default)]
 struct DiscordLoginState {
     is_logged_in: bool,
-    #[cfg(feature = "discord")]
     gateway_task: Option<tokio::task::JoinHandle<()>>,
 }
 
-#[cfg(feature = "discord")]
 struct ReadySignalHandler {
     ready_sender: Arc<tokio::sync::Mutex<Option<oneshot::Sender<()>>>>,
 }
 
-#[cfg(feature = "discord")]
 #[serenity::async_trait]
 impl SerenityEventHandler for ReadySignalHandler {
     async fn ready(&self, _ctx: SerenityContext, ready: Ready) {
@@ -95,54 +90,44 @@ impl DiscordClient {
             return Ok(());
         }
 
-        #[cfg(not(feature = "discord"))]
-        {
-            return Err(anyhow!(
-                "Discord support is disabled at compile time (enable the `discord` feature)"
-            ));
-        }
+        let intents = if self._config.auth.use_privileged_intents {
+            GatewayIntents::all()
+        } else {
+            GatewayIntents::non_privileged()
+        };
 
-        #[cfg(feature = "discord")]
-        {
-            let intents = if self._config.auth.use_privileged_intents {
-                GatewayIntents::all()
-            } else {
-                GatewayIntents::non_privileged()
-            };
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let event_handler = ReadySignalHandler {
+            ready_sender: Arc::new(tokio::sync::Mutex::new(Some(ready_tx))),
+        };
 
-            let (ready_tx, ready_rx) = oneshot::channel();
-            let event_handler = ReadySignalHandler {
-                ready_sender: Arc::new(tokio::sync::Mutex::new(Some(ready_tx))),
-            };
+        let mut gateway_client = SerenityClient::builder(&self._config.auth.bot_token, intents)
+            .event_handler(event_handler)
+            .await
+            .map_err(|err| anyhow!("failed to build discord gateway client: {err}"))?;
 
-            let mut gateway_client = SerenityClient::builder(&self._config.auth.bot_token, intents)
-                .event_handler(event_handler)
-                .await
-                .map_err(|err| anyhow!("failed to build discord gateway client: {err}"))?;
+        let gateway_task = tokio::spawn(async move {
+            if let Err(err) = gateway_client.start_autosharded().await {
+                error!("discord gateway stopped: {err}");
+            }
+        });
 
-            let gateway_task = tokio::spawn(async move {
-                if let Err(err) = gateway_client.start_autosharded().await {
-                    error!("discord gateway stopped: {err}");
-                }
-            });
-
-            match tokio::time::timeout(std::time::Duration::from_secs(30), ready_rx).await {
-                Ok(Ok(())) => {
-                    state.is_logged_in = true;
-                    state.gateway_task = Some(gateway_task);
-                    info!("discord bot login succeeded and gateway is connected");
-                    Ok(())
-                }
-                Ok(Err(_)) => {
-                    gateway_task.abort();
-                    Err(anyhow!(
-                        "discord gateway exited before receiving Ready event"
-                    ))
-                }
-                Err(_) => {
-                    gateway_task.abort();
-                    Err(anyhow!("timed out waiting for discord Ready event"))
-                }
+        match tokio::time::timeout(std::time::Duration::from_secs(30), ready_rx).await {
+            Ok(Ok(())) => {
+                state.is_logged_in = true;
+                state.gateway_task = Some(gateway_task);
+                info!("discord bot login succeeded and gateway is connected");
+                Ok(())
+            }
+            Ok(Err(_)) => {
+                gateway_task.abort();
+                Err(anyhow!(
+                    "discord gateway exited before receiving Ready event"
+                ))
+            }
+            Err(_) => {
+                gateway_task.abort();
+                Err(anyhow!("timed out waiting for discord Ready event"))
             }
         }
     }
@@ -159,7 +144,6 @@ impl DiscordClient {
             return Ok(());
         }
 
-        #[cfg(feature = "discord")]
         if let Some(gateway_task) = state.gateway_task.take() {
             gateway_task.abort();
             match gateway_task.await {

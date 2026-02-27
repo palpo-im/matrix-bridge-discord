@@ -14,10 +14,9 @@ name = "matrix-bridge-discord"
 path = "src/main.rs"
 
 [features]
-default = ["postgres", "sqlite", "discord"]
+default = ["postgres", "sqlite"]
 postgres = []
 sqlite = []
-discord = ["serenity"]
 
 [dependencies]
 salvo = { version = "0.89", features = ["oapi", "quinn"] }
@@ -30,7 +29,7 @@ serenity = { version = "0.12", default-features = false, features = [
     "model",
     "utils",
     "cache",
-], optional = true }
+] }
 songbird = { version = "0.4.6", optional = true }
 diesel = { version = "2.3.6", default-features = false, features = [
     "postgres",
