@@ -13,10 +13,11 @@ use crate::discord::{
 use crate::matrix::{MatrixAppservice, MatrixCommandHandler, MatrixCommandOutcome, MatrixEvent};
 use crate::media::MediaHandler;
 
-pub mod message_flow;
 pub mod logic;
+pub mod message_flow;
 pub mod presence_handler;
 pub mod provisioning;
+pub mod queue;
 
 use self::logic::{
     action_keyword, apply_message_relation_mappings, build_discord_typing_request,
@@ -29,6 +30,7 @@ use self::presence_handler::{
     DiscordPresence, MatrixPresenceState, MatrixPresenceTarget, PresenceHandler,
 };
 use self::provisioning::{ApprovalResponseStatus, ProvisioningCoordinator, ProvisioningError};
+use self::queue::ChannelQueue;
 
 #[derive(Debug, Clone)]
 pub struct DiscordMessageContext {
@@ -53,6 +55,7 @@ pub struct BridgeCore {
     presence_handler: Arc<PresenceHandler>,
     provisioning: Arc<ProvisioningCoordinator>,
     media_handler: Arc<MediaHandler>,
+    message_queue: Arc<ChannelQueue>,
 }
 
 impl BridgeCore {
@@ -76,6 +79,7 @@ impl BridgeCore {
             presence_handler: Arc::new(PresenceHandler::new(None)),
             provisioning: Arc::new(ProvisioningCoordinator::default()),
             media_handler: Arc::new(MediaHandler::new(&homeserver_url)),
+            message_queue: Arc::new(ChannelQueue::new()),
             matrix_client,
             discord_client,
             db_manager,
