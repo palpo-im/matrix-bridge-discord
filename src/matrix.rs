@@ -87,6 +87,35 @@ pub struct MatrixEvent {
     pub timestamp: Option<String>,
 }
 
+fn build_matrix_message_content(body: &str, reply_to: Option<&str>, edit_of: Option<&str>) -> Value {
+    let mut content = json!({
+        "msgtype": "m.text",
+        "body": body,
+    });
+
+    if let Some(reply_id) = reply_to {
+        content["m.relates_to"] = json!({
+            "m.in_reply_to": {
+                "event_id": reply_id
+            }
+        });
+    }
+
+    if let Some(edit_event_id) = edit_of {
+        content["m.new_content"] = json!({
+            "msgtype": "m.text",
+            "body": body,
+        });
+        content["m.relates_to"] = json!({
+            "rel_type": "m.replace",
+            "event_id": edit_event_id,
+        });
+        content["body"] = format!("* {body}").into();
+    }
+
+    content
+}
+
 impl MatrixAppservice {
     pub async fn new(config: Arc<Config>) -> Result<Self> {
         info!(
@@ -216,30 +245,7 @@ impl MatrixAppservice {
             .impersonate_user_id(Some(sender), None::<&str>)
             .await;
 
-        let mut content = json!({
-            "msgtype": "m.text",
-            "body": body,
-        });
-
-        if let Some(reply_id) = reply_to {
-            content["m.relates_to"] = json!({
-                "m.in_reply_to": {
-                    "event_id": reply_id
-                }
-            });
-        }
-
-        if let Some(edit_event_id) = edit_of {
-            content["m.new_content"] = json!({
-                "msgtype": "m.text",
-                "body": body,
-            });
-            content["m.relates_to"] = json!({
-                "rel_type": "m.replace",
-                "event_id": edit_event_id,
-            });
-            content["body"] = format!("* {body}").into();
-        }
+        let content = build_matrix_message_content(body, reply_to, edit_of);
 
         let event_id = ghost_client
             .send_event(room_id, "m.room.message", &content)
@@ -381,5 +387,29 @@ impl MatrixAppservice {
                 "rooms": []
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_matrix_message_content;
+
+    #[test]
+    fn message_content_adds_reply_relation() {
+        let content = build_matrix_message_content("hello", Some("$event123"), None);
+        assert_eq!(content["msgtype"], "m.text");
+        assert_eq!(content["body"], "hello");
+        assert_eq!(content["m.relates_to"]["m.in_reply_to"]["event_id"], "$event123");
+        assert!(content.get("m.new_content").is_none());
+    }
+
+    #[test]
+    fn message_content_adds_edit_relation() {
+        let content = build_matrix_message_content("new body", None, Some("$old_event"));
+        assert_eq!(content["msgtype"], "m.text");
+        assert_eq!(content["body"], "* new body");
+        assert_eq!(content["m.new_content"]["body"], "new body");
+        assert_eq!(content["m.relates_to"]["rel_type"], "m.replace");
+        assert_eq!(content["m.relates_to"]["event_id"], "$old_event");
     }
 }
