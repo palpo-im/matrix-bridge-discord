@@ -9,20 +9,24 @@ use crate::db::{DatabaseManager, UserMapping};
 use crate::matrix::MatrixAppservice;
 use crate::config::Config;
 
-pub struct UserSyncHandler {
-    db: Arc<DatabaseManager>,
-    matrix: Arc<MatrixAppservice>,
-    config: Arc<Config>,
-}
-
-impl UserSyncHandler {
-    pub fn new(db: Arc<DatabaseManager>, matrix: Arc<MatrixAppservice>, config: Arc<Config>) -> Self {
-        Self { db, matrix, config }
-    }
+const CACHE_TTL_SECS: i64 = 300;
 
 struct DisplaynameCacheEntry {
     displayname: String,
     timestamp: i64,
+}
+
+struct AvatarCacheEntry {
+    mxc_url: String,
+    timestamp: i64,
+}
+
+pub struct UserSyncHandler {
+    db: Arc<DatabaseManager>,
+    matrix: Arc<MatrixAppservice>,
+    config: Arc<Config>,
+    avatar_cache: HashMap<String, AvatarCacheEntry>,
+    displayname_cache: HashMap<String, DisplaynameCacheEntry>,
 }
 
 impl UserSyncHandler {
@@ -97,6 +101,7 @@ impl UserSyncHandler {
                 displayname: displayname.clone(),
                 avatar_url: discord_avatar_url.map(ToOwned::to_owned),
                 remove_avatar: false,
+                roles: Vec::new(),
             }
         } else {
             let existing = existing.unwrap();
@@ -109,12 +114,13 @@ impl UserSyncHandler {
                 } else {
                     None
                 },
-                avatar_url: if discord_avatar_url.as_ref() != existing.discord_avatar.as_deref() {
+                avatar_url: if discord_avatar_url != existing.discord_avatar.as_deref() {
                     discord_avatar_url.map(ToOwned::to_owned)
                 } else {
                     None
                 },
                 remove_avatar: discord_avatar_url.is_none() && existing.discord_avatar.is_some(),
+                roles: Vec::new(),
             }
         };
 
@@ -143,14 +149,14 @@ impl UserSyncHandler {
 
         self.matrix.ensure_ghost_user_registered(&state.id, state.displayname.as_deref()).await?;
 
-        if let Some(ref displayname) = &state.displayname {
+        if let Some(displayname) = &state.displayname {
             debug!("Setting displayname for {} to {}", state.mx_user_id, displayname);
             if let Err(e) = self.matrix.set_ghost_displayname(&state.id, displayname).await {
                 warn!("Failed to set displayname for {}: {}", state.mx_user_id, e);
             }
         }
 
-        if let Some(ref avatar_url) = &state.avatar_url {
+        if let Some(avatar_url) = &state.avatar_url {
             debug!("Setting avatar for {} from {}", state.mx_user_id, avatar_url);
             match self.upload_avatar_to_matrix(&state.id, avatar_url).await {
                 Ok(mxc_url) => {
@@ -201,7 +207,7 @@ impl UserSyncHandler {
         for mapping in room_mappings {
             guild_rooms
                 .entry(mapping.discord_guild_id.clone())
-                .or_default_with(Vec::new)
+                .or_default()
                 .push(mapping.matrix_room_id);
         }
 
@@ -227,12 +233,14 @@ impl UserSyncHandler {
             self.matrix.set_ghost_room_avatar(&state.id, room_id, avatar_mxc).await?;
         }
 
+        if !state.roles.is_empty() {
+            self.matrix.set_ghost_room_roles(&state.id, room_id, &state.roles).await?;
+        }
+
         Ok(())
     }
 
     pub async fn ensure_user_in_room(&self, discord_user_id: &str, room_id: &str) -> Result<()> {
-        let ghost_user_id = format!("@_discord_{}:{}", discord_user_id, self.config.bridge.domain);
-        
         self.matrix.ensure_ghost_user_registered(discord_user_id, None).await?;
         self.matrix.invite_ghost_to_room(discord_user_id, room_id).await?;
         
@@ -240,9 +248,19 @@ impl UserSyncHandler {
     }
 
     pub async fn remove_user_from_room(&self, discord_user_id: &str, room_id: &str) -> Result<()> {
-        let ghost_user_id = format!("@_discord_{}:{}", discord_user_id, self.config.bridge.domain);
-        
         self.matrix.kick_ghost_from_room(discord_user_id, room_id).await?;
+        
+        Ok(())
+    }
+
+    pub async fn sync_user_roles(&self, discord_user_id: &str, guild_id: &str, roles: &[String]) -> Result<()> {
+        let room_mappings = self.db.room_store().get_rooms_by_guild(guild_id).await?;
+        
+        for mapping in room_mappings {
+            if let Err(e) = self.matrix.set_ghost_room_roles(discord_user_id, &mapping.matrix_room_id, roles).await {
+                warn!("Failed to sync roles for {} in room {}: {}", discord_user_id, mapping.matrix_room_id, e);
+            }
+        }
         
         Ok(())
     }
@@ -271,4 +289,43 @@ struct UserState {
     displayname: Option<String>,
     avatar_url: Option<String>,
     remove_avatar: bool,
+    roles: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sanitize_test(input: &str) -> String {
+        let mut result = String::new();
+        for c in input.chars() {
+            match c {
+                'a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '-' | '.' | '=' | '/' | '+' => {
+                    result.push(c);
+                }
+                _ => {
+                    result.push('_');
+                }
+            }
+        }
+        result
+    }
+
+    #[test]
+    fn sanitize_for_mxid_replaces_special_chars() {
+        let result = sanitize_test("hello world!");
+        assert_eq!(result, "hello_world_");
+    }
+    
+    #[test]
+    fn sanitize_for_mxid_keeps_alphanumeric() {
+        let result = sanitize_test("User123");
+        assert_eq!(result, "User123");
+    }
+    
+    #[test]
+    fn sanitize_for_mxid_keeps_special_allowed() {
+        let result = sanitize_test("user-name.test_123");
+        assert_eq!(result, "user-name.test_123");
+    }
 }

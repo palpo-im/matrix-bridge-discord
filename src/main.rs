@@ -8,6 +8,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use tracing::{error, info};
 
+mod admin;
 mod bridge;
 mod cache;
 mod cli;

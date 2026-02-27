@@ -525,87 +525,89 @@ mod tests {
     use super::*;
 
     fn make_converter() -> DiscordToMatrixConverter {
-        DiscordToMatrixConverter::new(Arc::new(
-            crate::discord::DiscordClient::new(std::sync::Arc::new(
-                crate::config::Config {
-                    bridge: crate::config::BridgeConfig {
-                        domain: "example.org".to_string(),
-                        port: 9005,
-                        bind_address: "127.0.0.1".to_string(),
-                        homeserver_url: "http://localhost:8008".to_string(),
-                        presence_interval: 500,
-                        disable_presence: false,
-                        disable_typing_notifications: false,
-                        disable_discord_mentions: false,
-                        disable_deletion_forwarding: false,
-                        enable_self_service_bridging: false,
-                        disable_portal_bridging: false,
-                        disable_read_receipts: false,
-                        disable_everyone_mention: false,
-                        disable_here_mention: false,
-                        disable_join_leave_notifications: false,
-                        disable_invite_notifications: false,
-                        disable_room_topic_notifications: false,
-                        determine_code_language: false,
-                        user_limit: None,
-                        admin_mxid: None,
-                        invalid_token_message: String::new(),
-                        user_activity: None,
+        tokio_test::block_on(async {
+            DiscordToMatrixConverter::new(Arc::new(
+                crate::discord::DiscordClient::new(std::sync::Arc::new(
+                    crate::config::Config {
+                        bridge: crate::config::BridgeConfig {
+                            domain: "example.org".to_string(),
+                            port: 9005,
+                            bind_address: "127.0.0.1".to_string(),
+                            homeserver_url: "http://localhost:8008".to_string(),
+                            presence_interval: 500,
+                            disable_presence: false,
+                            disable_typing_notifications: false,
+                            disable_discord_mentions: false,
+                            disable_deletion_forwarding: false,
+                            enable_self_service_bridging: false,
+                            disable_portal_bridging: false,
+                            disable_read_receipts: false,
+                            disable_everyone_mention: false,
+                            disable_here_mention: false,
+                            disable_join_leave_notifications: false,
+                            disable_invite_notifications: false,
+                            disable_room_topic_notifications: false,
+                            determine_code_language: false,
+                            user_limit: None,
+                            admin_mxid: None,
+                            invalid_token_message: String::new(),
+                            user_activity: None,
+                        },
+                        registration: crate::config::RegistrationConfig::default(),
+                        auth: crate::config::AuthConfig {
+                            bot_token: "test".to_string(),
+                            client_id: None,
+                            client_secret: None,
+                            use_privileged_intents: false,
+                        },
+                        logging: crate::config::LoggingConfig {
+                            level: "info".to_string(),
+                            line_date_format: String::new(),
+                            format: "pretty".to_string(),
+                            file: None,
+                            files: vec![],
+                        },
+                        database: crate::config::DatabaseConfig {
+                            url: Some("sqlite://test.db".to_string()),
+                            conn_string: None,
+                            filename: None,
+                            user_store_path: None,
+                            room_store_path: None,
+                            max_connections: None,
+                            min_connections: None,
+                        },
+                        room: crate::config::RoomConfig {
+                            default_visibility: "private".to_string(),
+                            room_alias_prefix: "_discord".to_string(),
+                            enable_room_creation: true,
+                            kick_for: 0,
+                        },
+                        channel: crate::config::ChannelConfig {
+                            enable_channel_creation: false,
+                            channel_name_format: String::new(),
+                            name_pattern: String::new(),
+                            topic_format: String::new(),
+                            delete_options: crate::config::ChannelDeleteOptionsConfig::default(),
+                            enable_webhook: true,
+                            webhook_name: "_matrix".to_string(),
+                            webhook_avatar: String::new(),
+                        },
+                        limits: crate::config::LimitsConfig::default(),
+                        ghosts: crate::config::GhostsConfig {
+                            nick_pattern: String::new(),
+                            username_pattern: String::new(),
+                            username_template: String::new(),
+                            displayname_template: String::new(),
+                            avatar_url_template: None,
+                        },
+                        metrics: crate::config::MetricsConfig::default(),
                     },
-                    registration: crate::config::RegistrationConfig::default(),
-                    auth: crate::config::AuthConfig {
-                        bot_token: "test".to_string(),
-                        client_id: None,
-                        client_secret: None,
-                        use_privileged_intents: false,
-                    },
-                    logging: crate::config::LoggingConfig {
-                        level: "info".to_string(),
-                        line_date_format: String::new(),
-                        format: "pretty".to_string(),
-                        file: None,
-                        files: vec![],
-                    },
-                    database: crate::config::DatabaseConfig {
-                        url: Some("sqlite://test.db".to_string()),
-                        conn_string: None,
-                        filename: None,
-                        user_store_path: None,
-                        room_store_path: None,
-                        max_connections: None,
-                        min_connections: None,
-                    },
-                    room: crate::config::RoomConfig {
-                        default_visibility: "private".to_string(),
-                        room_alias_prefix: "_discord".to_string(),
-                        enable_room_creation: true,
-                        kick_for: 0,
-                    },
-                    channel: crate::config::ChannelConfig {
-                        enable_channel_creation: false,
-                        channel_name_format: String::new(),
-                        name_pattern: String::new(),
-                        topic_format: String::new(),
-                        delete_options: crate::config::ChannelDeleteOptionsConfig::default(),
-                        enable_webhook: true,
-                        webhook_name: "_matrix".to_string(),
-                        webhook_avatar: String::new(),
-                    },
-                    limits: crate::config::LimitsConfig::default(),
-                    ghosts: crate::config::GhostsConfig {
-                        nick_pattern: String::new(),
-                        username_pattern: String::new(),
-                        username_template: String::new(),
-                        displayname_template: String::new(),
-                        avatar_url_template: None,
-                    },
-                    metrics: crate::config::MetricsConfig::default(),
-                },
+                ))
+                .await
+                .unwrap(),
             ))
-            .await
-            .unwrap(),
-        ))
-        .with_domain("example.org".to_string())
+            .with_domain("example.org".to_string())
+        })
     }
 
     #[test]

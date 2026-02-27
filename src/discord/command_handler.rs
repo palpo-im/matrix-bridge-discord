@@ -20,6 +20,10 @@ pub enum DiscordCommandOutcome {
         matrix_user: String,
     },
     UnbridgeRequested,
+    BridgeRequested {
+        guild_id: String,
+        channel_id: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -69,6 +73,21 @@ impl DiscordCommandHandler {
                 }
                 DiscordCommandOutcome::DenyRequested
             }
+            "bridge" => self.handle_bridge(parsed.args, granted_permissions, is_channel_bridged),
+            "unbridge" => {
+                if !has_all_permissions(
+                    granted_permissions,
+                    &["MANAGE_WEBHOOKS", "MANAGE_CHANNELS"],
+                ) {
+                    return permission_denied();
+                }
+                if !is_channel_bridged {
+                    return DiscordCommandOutcome::Reply(
+                        "This channel is not bridged to a plumbed matrix room".to_string(),
+                    );
+                }
+                DiscordCommandOutcome::UnbridgeRequested
+            }
             "kick" => self.handle_moderation(
                 parsed.args,
                 granted_permissions,
@@ -87,23 +106,41 @@ impl DiscordCommandHandler {
                 "BAN_MEMBERS",
                 ModerationAction::Unban,
             ),
-            "unbridge" => {
-                if !has_all_permissions(
-                    granted_permissions,
-                    &["MANAGE_WEBHOOKS", "MANAGE_CHANNELS"],
-                ) {
-                    return permission_denied();
-                }
-                if !is_channel_bridged {
-                    return DiscordCommandOutcome::Reply(
-                        "This channel is not bridged to a plumbed matrix room".to_string(),
-                    );
-                }
-                DiscordCommandOutcome::UnbridgeRequested
-            }
             _ => DiscordCommandOutcome::Reply(
                 "**ERROR:** unknown command. Try `!matrix help` to see all commands".to_string(),
             ),
+        }
+    }
+
+    fn handle_bridge(
+        &self,
+        args: Vec<String>,
+        granted_permissions: &HashSet<String>,
+        is_channel_bridged: bool,
+    ) -> DiscordCommandOutcome {
+        if !has_all_permissions(granted_permissions, &["MANAGE_WEBHOOKS", "MANAGE_CHANNELS"]) {
+            return permission_denied();
+        }
+
+        if is_channel_bridged {
+            return DiscordCommandOutcome::Reply(
+                "This channel is already bridged. Use `!matrix unbridge` to remove the bridge first.".to_string(),
+            );
+        }
+
+        if args.len() < 2 {
+            return DiscordCommandOutcome::Reply(
+                "**ERROR:** Invalid syntax. Usage: `!matrix bridge <guild_id> <channel_id>`"
+                    .to_string(),
+            );
+        }
+
+        let guild_id = args[0].clone();
+        let channel_id = args[1].clone();
+
+        DiscordCommandOutcome::BridgeRequested {
+            guild_id,
+            channel_id,
         }
     }
 
@@ -134,6 +171,7 @@ impl DiscordCommandHandler {
         match command {
             Some("approve") => "`!matrix approve`: Approve a pending bridge request".to_string(),
             Some("deny") => "`!matrix deny`: Deny a pending bridge request".to_string(),
+            Some("bridge") => "`!matrix bridge <guild_id> <channel_id>`: Bridge this channel to a Matrix room".to_string(),
             Some("kick") => "`!matrix kick <name>`: Kicks a user on the Matrix side".to_string(),
             Some("ban") => "`!matrix ban <name>`: Bans a user on the Matrix side".to_string(),
             Some("unban") => "`!matrix unban <name>`: Unbans a user on the Matrix side".to_string(),
@@ -141,7 +179,7 @@ impl DiscordCommandHandler {
             Some(_) => "**ERROR:** unknown command! Try `!matrix help` to see all commands"
                 .to_string(),
             None => {
-                "Available Commands:\n - `!matrix approve`: Approve a pending bridge request\n - `!matrix deny`: Deny a pending bridge request\n - `!matrix kick <name>`: Kicks a user on the Matrix side\n - `!matrix ban <name>`: Bans a user on the Matrix side\n - `!matrix unban <name>`: Unbans a user on the Matrix side\n - `!matrix unbridge`: Unbridge Matrix rooms from this channel".to_string()
+                "Available Commands:\n - `!matrix approve`: Approve a pending bridge request\n - `!matrix deny`: Deny a pending bridge request\n - `!matrix bridge <guild_id> <channel_id>`: Bridge this channel to a Matrix room\n - `!matrix kick <name>`: Kicks a user on the Matrix side\n - `!matrix ban <name>`: Bans a user on the Matrix side\n - `!matrix unban <name>`: Unbans a user on the Matrix side\n - `!matrix unbridge`: Unbridge Matrix rooms from this channel".to_string()
             }
         }
     }
@@ -218,6 +256,32 @@ mod tests {
             DiscordCommandOutcome::Reply(
                 "This channel is not bridged to a plumbed matrix room".to_string()
             )
+        );
+    }
+
+    #[test]
+    fn bridge_command_requires_permissions() {
+        let handler = DiscordCommandHandler::new();
+        let permissions = HashSet::new();
+        let outcome = handler.handle("!matrix bridge 123 456", false, &permissions);
+        assert_eq!(
+            outcome,
+            DiscordCommandOutcome::Reply("**ERROR:** insufficient permissions to use this command! Try `!matrix help` to see all available commands".to_string()),
+        );
+    }
+
+    #[test]
+    fn bridge_command_returns_guild_and_channel() {
+        let handler = DiscordCommandHandler::new();
+        let permissions =
+            HashSet::from(["MANAGE_WEBHOOKS".to_string(), "MANAGE_CHANNELS".to_string()]);
+        let outcome = handler.handle("!matrix bridge 123456 789012", false, &permissions);
+        assert_eq!(
+            outcome,
+            DiscordCommandOutcome::BridgeRequested {
+                guild_id: "123456".to_string(),
+                channel_id: "789012".to_string(),
+            }
         );
     }
 }

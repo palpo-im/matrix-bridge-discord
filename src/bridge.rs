@@ -16,11 +16,13 @@ use crate::emoji::EmojiHandler;
 use crate::matrix::{MatrixAppservice, MatrixCommandHandler, MatrixCommandOutcome, MatrixEvent};
 use crate::media::MediaHandler;
 
+pub mod blocker;
 pub mod logic;
 pub mod message_flow;
 pub mod presence_handler;
 pub mod provisioning;
 pub mod queue;
+pub mod user_sync;
 
 use self::logic::{
     action_keyword, apply_message_relation_mappings, build_discord_typing_request,
@@ -651,15 +653,45 @@ impl BridgeCore {
                 {
                     let kick_for = self.matrix_client.config().room.kick_for;
                     if kick_for > 0 {
+                        let room_mapping = self.get_room_mapping_cached(&event.room_id).await?;
+                        let Some(mapping) = room_mapping else {
+                            return Ok(());
+                        };
+
+                        let domain_suffix =
+                            format!(":{}", self.matrix_client.config().bridge.domain);
+                        let Some(localpart) = state_key.strip_prefix("@_discord_") else {
+                            return Ok(());
+                        };
+                        let Some(discord_user_id) = localpart.strip_suffix(&domain_suffix) else {
+                            return Ok(());
+                        };
+
                         let target_user = state_key.clone();
                         let room_id = event.room_id.clone();
+                        let channel_id = mapping.discord_channel_id.clone();
+                        let discord_user_id = discord_user_id.to_string();
+                        let discord_client = self.discord_client.clone();
+
                         tokio::spawn(async move {
                             tokio::time::sleep(tokio::time::Duration::from_millis(kick_for)).await;
-                            info!(
-                                "Lifting kick for {} in {} after {} ms, restoring Discord permissions",
-                                target_user, room_id, kick_for
-                            );
-                            // TODO: Actually overwrite Discord permissions via DiscordClient when fully implemented
+                            match discord_client
+                                .clear_channel_member_overwrite(&channel_id, &discord_user_id)
+                                .await
+                            {
+                                Ok(()) => {
+                                    info!(
+                                        "restored discord channel permissions for user={} matrix_user={} room={} channel={} after {}ms",
+                                        discord_user_id, target_user, room_id, channel_id, kick_for
+                                    );
+                                }
+                                Err(err) => {
+                                    warn!(
+                                        "failed to restore discord channel permissions for user={} matrix_user={} room={} channel={} after {}ms: {}",
+                                        discord_user_id, target_user, room_id, channel_id, kick_for, err
+                                    );
+                                }
+                            }
                         });
                     }
                 }
@@ -745,6 +777,10 @@ impl BridgeCore {
 
         let room_mapping = self.get_room_mapping_cached(&event.room_id).await?;
         let Some(mapping) = room_mapping else {
+            debug!(
+                "matrix room topic ignored room_id={} reason=no_discord_mapping",
+                event.room_id
+            );
             return Ok(());
         };
 
@@ -769,6 +805,71 @@ impl BridgeCore {
             .await?;
 
         debug!("forwarded room topic change to discord channel={}", mapping.discord_channel_id);
+        Ok(())
+    }
+
+    pub async fn handle_matrix_power_levels(&self, event: &MatrixEvent) -> Result<()> {
+        let room_mapping = self.get_room_mapping_cached(&event.room_id).await?;
+
+        let Some(mapping) = room_mapping else {
+            debug!(
+                "matrix power levels ignored room_id={} reason=no_discord_mapping",
+                event.room_id
+            );
+            return Ok(());
+        };
+
+        let domain_suffix = format!(":{}", self.matrix_client.config().bridge.domain);
+        let mut changed_users = Vec::new();
+        if let Some(content) = event.content.as_ref().and_then(|c| c.as_object()) {
+            if let Some(users) = content.get("users").and_then(|u| u.as_object()) {
+                for (mxid, level_json) in users {
+                    let Some(level) = level_json.as_i64() else {
+                        continue;
+                    };
+                    let Some(localpart) = mxid.strip_prefix("@_discord_") else {
+                        continue;
+                    };
+                    let Some(discord_user_id) = localpart.strip_suffix(&domain_suffix) else {
+                        continue;
+                    };
+                    if discord_user_id.is_empty() || discord_user_id.contains(':') {
+                        continue;
+                    }
+                    changed_users.push(format!("{} -> {}", discord_user_id, level));
+                }
+            }
+        }
+
+        if changed_users.is_empty() {
+            return Ok(());
+        }
+
+        let sender_displayname = self
+            .matrix_client
+            .get_user_profile(&event.sender)
+            .await
+            .ok()
+            .flatten()
+            .map(|(name, _)| name)
+            .unwrap_or_else(|| event.sender.clone());
+
+        let message = format!(
+            "**{}** updated Matrix power levels for bridged users: {}",
+            sender_displayname,
+            changed_users.join(", ")
+        );
+
+        self.discord_client
+            .send_message(&mapping.discord_channel_id, &message)
+            .await?;
+
+        debug!(
+            "forwarded matrix power level change to discord channel={} users={}",
+            mapping.discord_channel_id,
+            changed_users.len()
+        );
+
         Ok(())
     }
 
@@ -1510,8 +1611,68 @@ impl BridgeCore {
                         .await?;
                 }
             }
+            DiscordCommandOutcome::BridgeRequested { guild_id, channel_id } => {
+                let reply = self
+                    .request_bridge_discord_channel(&ctx.channel_id, &ctx.sender_id, &guild_id, &channel_id)
+                    .await?;
+                self.discord_client
+                    .send_message(&ctx.channel_id, &reply)
+                    .await?;
+            }
         }
         Ok(())
+    }
+
+    async fn request_bridge_discord_channel(
+        &self,
+        discord_channel_id: &str,
+        requestor_id: &str,
+        guild_id: &str,
+        channel_id: &str,
+    ) -> Result<String> {
+        if self
+            .db_manager
+            .room_store()
+            .get_room_by_discord_channel(channel_id)
+            .await?
+            .is_some()
+        {
+            return Ok("That Discord channel is already bridged.".to_string());
+        }
+
+        let Some(channel) = self.discord_client.get_channel(channel_id).await? else {
+            return Ok("Could not find the specified Discord channel.".to_string());
+        };
+
+        let matrix_room_id = match self.matrix_client.create_room(
+            &channel.id,
+            &format!("[Discord] #{}", channel.name),
+            channel.topic.as_deref(),
+        ).await {
+            Ok(room_id) => room_id,
+            Err(e) => {
+                warn!("failed to create matrix room for bridge: {}", e);
+                return Ok("Failed to create Matrix room for the bridge.".to_string());
+            }
+        };
+
+        let mapping = RoomMapping {
+            id: 0,
+            matrix_room_id: matrix_room_id.clone(),
+            discord_channel_id: channel.id.clone(),
+            discord_channel_name: channel.name.clone(),
+            discord_guild_id: guild_id.to_string(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        
+        self.db_manager
+            .room_store()
+            .create_room_mapping(&mapping)
+            .await?;
+
+        info!("created bridge from discord channel {} to matrix room {}", channel.id, matrix_room_id);
+        Ok(format!("Successfully bridged to Matrix room: {}", matrix_room_id))
     }
 
     pub async fn handle_discord_message(
@@ -1854,6 +2015,17 @@ impl BridgeCore {
 
     pub fn db(&self) -> Arc<DatabaseManager> {
         self.db_manager.clone()
+    }
+
+    pub async fn discord_client(&self) -> Arc<DiscordClient> {
+        self.discord_client.clone()
+    }
+
+    pub fn blocker(&self) -> Arc<blocker::BridgeBlocker> {
+        Arc::new(blocker::BridgeBlocker::new(
+            self.db_manager.clone(),
+            self.matrix_client.config(),
+        ))
     }
 }
 

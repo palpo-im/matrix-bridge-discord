@@ -17,6 +17,7 @@ pub trait MatrixEventHandler: Send + Sync {
     async fn handle_room_encryption(&self, event: &MatrixEvent) -> Result<()>;
     async fn handle_room_name(&self, event: &MatrixEvent) -> Result<()>;
     async fn handle_room_topic(&self, event: &MatrixEvent) -> Result<()>;
+    async fn handle_room_power_levels(&self, event: &MatrixEvent) -> Result<()>;
 }
 
 pub struct MatrixEventHandlerImpl {
@@ -87,6 +88,15 @@ impl MatrixEventHandler for MatrixEventHandlerImpl {
         }
         Ok(())
     }
+
+    async fn handle_room_power_levels(&self, event: &MatrixEvent) -> Result<()> {
+        if let Some(bridge) = &self.bridge {
+            bridge.handle_matrix_power_levels(event).await?;
+        } else {
+            debug!("matrix power levels received without bridge binding");
+        }
+        Ok(())
+    }
 }
 
 pub struct MatrixEventProcessor {
@@ -131,7 +141,8 @@ impl MatrixEventProcessor {
             "m.room.encryption" => self.event_handler.handle_room_encryption(&event).await?,
             "m.room.name" => self.event_handler.handle_room_name(&event).await?,
             "m.room.topic" => self.event_handler.handle_room_topic(&event).await?,
-            other => warn!("unhandled matrix event type: {}", other),
+            "m.room.power_levels" => self.event_handler.handle_room_power_levels(&event).await?,
+            other => debug!("unhandled matrix event type: {}", other),
         }
         Ok(())
     }

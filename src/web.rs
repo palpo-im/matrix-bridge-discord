@@ -14,10 +14,12 @@ use crate::matrix::MatrixAppservice;
 mod health;
 mod metrics;
 mod provisioning;
+mod thirdparty;
 
 use health::{get_status, health_check};
 use metrics::metrics_endpoint;
 use provisioning::{create_bridge, delete_bridge, get_bridge_info, list_rooms};
+use thirdparty::{get_protocol, get_networks, get_locations, get_users};
 
 #[derive(Clone)]
 pub struct WebState {
@@ -90,6 +92,17 @@ pub fn root_router() -> Router {
                     Router::with_path("bridges/{id}")
                         .get(get_bridge_info)
                         .delete(delete_bridge),
+                )
+                .push(
+                    Router::with_path("thirdparty")
+                        .push(Router::with_path("protocol").get(get_protocol))
+                        .push(Router::with_path("protocol/discord").get(get_protocol))
+                        .push(Router::with_path("network").get(get_networks))
+                        .push(Router::with_path("network/discord").get(get_networks))
+                        .push(Router::with_path("location").get(get_locations))
+                        .push(Router::with_path("location/discord").get(get_locations))
+                        .push(Router::with_path("user").get(get_users))
+                        .push(Router::with_path("user/discord").get(get_users)),
                 ),
         )
         .push(

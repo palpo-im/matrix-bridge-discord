@@ -647,6 +647,204 @@ impl MatrixAppservice {
         Ok(())
     }
 
+    pub async fn ban_user_from_room(&self, room_id: &str, user_id: &str, reason: Option<&str>) -> Result<()> {
+        let url = format!(
+            "{}/_matrix/client/v3/rooms/{}/ban",
+            self.config.bridge.homeserver_url.trim_end_matches('/'),
+            urlencoding::encode(room_id)
+        );
+
+        debug!("banning user {} from room {}", user_id, room_id);
+
+        let client = reqwest::Client::new();
+        let response = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.config.registration.appservice_token))
+            .json(&serde_json::json!({
+                "user_id": user_id,
+                "reason": reason.unwrap_or("")
+            }))
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to ban user from room: {}", e))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            warn!("failed to ban user from room: {} - {}", status, body);
+        }
+
+        Ok(())
+    }
+
+    pub async fn unban_user_from_room(&self, room_id: &str, user_id: &str) -> Result<()> {
+        let url = format!(
+            "{}/_matrix/client/v3/rooms/{}/unban",
+            self.config.bridge.homeserver_url.trim_end_matches('/'),
+            urlencoding::encode(room_id)
+        );
+
+        debug!("unbanning user {} from room {}", user_id, room_id);
+
+        let client = reqwest::Client::new();
+        let response = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.config.registration.appservice_token))
+            .json(&serde_json::json!({
+                "user_id": user_id
+            }))
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to unban user from room: {}", e))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            warn!("failed to unban user from room: {} - {}", status, body);
+        }
+
+        Ok(())
+    }
+
+    pub async fn set_ghost_displayname(&self, discord_user_id: &str, displayname: &str) -> Result<()> {
+        let user_id = ghost_user_id(discord_user_id, &self.config.bridge.domain);
+        
+        let ghost_client = self.appservice.client.clone();
+        ghost_client
+            .impersonate_user_id(Some(&user_id), None::<&str>)
+            .await;
+
+        ghost_client.set_display_name(displayname).await?;
+        Ok(())
+    }
+
+    pub async fn set_ghost_avatar(&self, discord_user_id: &str, avatar_url: &str) -> Result<()> {
+        let user_id = ghost_user_id(discord_user_id, &self.config.bridge.domain);
+        
+        let ghost_client = self.appservice.client.clone();
+        ghost_client
+            .impersonate_user_id(Some(&user_id), None::<&str>)
+            .await;
+
+        ghost_client.set_avatar_url(avatar_url).await?;
+        Ok(())
+    }
+
+    pub async fn upload_media_for_ghost(&self, discord_user_id: &str, data: &[u8], content_type: &str, filename: &str) -> Result<String> {
+        let media = crate::media::MediaInfo {
+            data: data.to_vec(),
+            content_type: content_type.to_string(),
+            filename: filename.to_string(),
+            size: data.len(),
+        };
+        self.upload_media(&media).await
+    }
+
+    pub async fn invite_ghost_to_room(&self, discord_user_id: &str, room_id: &str) -> Result<()> {
+        let ghost_user_id = ghost_user_id(discord_user_id, &self.config.bridge.domain);
+        self.invite_user_to_room(room_id, &ghost_user_id).await
+    }
+
+    pub async fn kick_ghost_from_room(&self, discord_user_id: &str, room_id: &str) -> Result<()> {
+        let ghost_user_id = ghost_user_id(discord_user_id, &self.config.bridge.domain);
+        self.kick_user_from_room(room_id, &ghost_user_id, None).await
+    }
+
+    pub async fn set_ghost_room_displayname(&self, discord_user_id: &str, room_id: &str, displayname: &str) -> Result<()> {
+        let user_id = ghost_user_id(discord_user_id, &self.config.bridge.domain);
+        
+        let content = json!({
+            "displayname": displayname,
+            "membership": "join"
+        });
+        
+        self.appservice
+            .client
+            .send_state_event(room_id, "m.room.member", &user_id, &content)
+            .await?;
+        
+        Ok(())
+    }
+
+    pub async fn set_ghost_room_avatar(&self, discord_user_id: &str, room_id: &str, avatar_mxc: &str) -> Result<()> {
+        let user_id = ghost_user_id(discord_user_id, &self.config.bridge.domain);
+        
+        let content = json!({
+            "avatar_url": avatar_mxc,
+            "membership": "join"
+        });
+        
+        self.appservice
+            .client
+            .send_state_event(room_id, "m.room.member", &user_id, &content)
+            .await?;
+        
+        Ok(())
+    }
+
+    pub async fn set_ghost_room_roles(&self, discord_user_id: &str, room_id: &str, roles: &[String]) -> Result<()> {
+        let user_id = ghost_user_id(discord_user_id, &self.config.bridge.domain);
+        
+        let content = json!({
+            "membership": "join",
+            "discord_roles": roles
+        });
+        
+        self.appservice
+            .client
+            .send_state_event(room_id, "m.room.member", &user_id, &content)
+            .await?;
+        
+        Ok(())
+    }
+
+    pub async fn set_room_avatar(&self, room_id: &str, avatar_mxc: &str) -> Result<()> {
+        let event_content = json!({ "url": avatar_mxc });
+        self.appservice
+            .client
+            .send_state_event(room_id, "m.room.avatar", "", &event_content)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn set_room_visibility(&self, room_id: &str, visibility: &str) -> Result<()> {
+        let url = format!(
+            "{}/_matrix/client/v3/rooms/{}/state/m.room.join_rules",
+            self.config.bridge.homeserver_url.trim_end_matches('/'),
+            urlencoding::encode(room_id)
+        );
+
+        let client = reqwest::Client::new();
+        let response = client
+            .put(&url)
+            .header("Authorization", format!("Bearer {}", self.config.registration.appservice_token))
+            .json(&serde_json::json!({
+                "join_rule": visibility
+            }))
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to set room visibility: {}", e))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            warn!("failed to set room visibility: {} - {}", status, body);
+        }
+
+        Ok(())
+    }
+
+    pub async fn get_room_avatar(&self, room_id: &str) -> Result<Option<String>> {
+        let state = self
+            .appservice
+            .client
+            .get_room_state_event(room_id, "m.room.avatar", "")
+            .await
+            .ok();
+        
+        Ok(state.and_then(|s| s.get("url").and_then(|u| u.as_str()).map(ToOwned::to_owned)))
+    }
+
     pub fn registration_preview(&self) -> Value {
         json!({
             "id": self.config.registration.bridge_id,

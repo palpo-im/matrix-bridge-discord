@@ -9,8 +9,9 @@ use tracing::{debug, error, info, warn};
 use serenity::all::{
     Client as SerenityClient, Context as SerenityContext, EventHandler as SerenityEventHandler,
     ChannelId, GatewayIntents, GuildId, Http, Message as SerenityMessage, MessageId,
-    MessageUpdateEvent, OnlineStatus, Permissions, Presence, Ready, TypingStartEvent,
-    Webhook, WebhookType, ExecuteWebhook, CreateAttachment, CreateMessage,
+    MessageUpdateEvent, OnlineStatus, Permissions, PermissionOverwriteType, Presence, Ready,
+    TypingStartEvent, UserId, Webhook, WebhookType, ExecuteWebhook, CreateAttachment,
+    CreateMessage,
 };
 use tokio::sync::{RwLock, oneshot, Mutex as AsyncMutex};
 
@@ -1074,6 +1075,34 @@ impl DiscordClient {
             discriminator: "0001".to_string(),
             avatar: None,
         }))
+    }
+
+    pub async fn clear_channel_member_overwrite(
+        &self,
+        channel_id: &str,
+        user_id: &str,
+    ) -> Result<()> {
+        let channel_id_num: u64 = channel_id
+            .parse()
+            .map_err(|_| anyhow!("invalid channel id: {}", channel_id))?;
+        let user_id_num: u64 = user_id
+            .parse()
+            .map_err(|_| anyhow!("invalid user id: {}", user_id))?;
+
+        let http_guard = self.http.read().await;
+        let Some(http) = http_guard.as_ref() else {
+            return Err(anyhow!("discord http client not available"));
+        };
+
+        ChannelId::new(channel_id_num)
+            .delete_permission(
+                http,
+                PermissionOverwriteType::Member(UserId::new(user_id_num)),
+            )
+            .await
+            .map_err(|e| anyhow!("failed to clear channel overwrite: {}", e))?;
+
+        Ok(())
     }
 
     pub async fn get_channel(&self, channel_id: &str) -> Result<Option<DiscordChannel>> {

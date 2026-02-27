@@ -12,6 +12,15 @@ static DISCORD_MESSAGES_FAILED: AtomicU64 = AtomicU64::new(0);
 static CACHE_HITS: AtomicU64 = AtomicU64::new(0);
 static CACHE_MISSES: AtomicU64 = AtomicU64::new(0);
 static PRESENCE_QUEUE_SIZE: AtomicU64 = AtomicU64::new(0);
+static MESSAGES_LATENCY_MS: AtomicU64 = AtomicU64::new(0);
+static MESSAGES_LATENCY_COUNT: AtomicU64 = AtomicU64::new(0);
+static ACTIVE_USERS: AtomicU64 = AtomicU64::new(0);
+static BRIDGED_ROOMS: AtomicU64 = AtomicU64::new(0);
+static ERROR_COUNT: AtomicU64 = AtomicU64::new(0);
+static EDITS_PROCESSED: AtomicU64 = AtomicU64::new(0);
+static DELETES_PROCESSED: AtomicU64 = AtomicU64::new(0);
+static ATTACHMENTS_UPLOADED: AtomicU64 = AtomicU64::new(0);
+static EMOJI_CONVERTED: AtomicU64 = AtomicU64::new(0);
 
 pub struct Metrics {
     started_at: Instant,
@@ -65,6 +74,39 @@ impl Metrics {
     pub fn set_presence_queue_size(size: u64) {
         PRESENCE_QUEUE_SIZE.store(size, Ordering::Relaxed);
     }
+
+    pub fn record_latency(latency_ms: u64) {
+        MESSAGES_LATENCY_MS.fetch_add(latency_ms, Ordering::Relaxed);
+        MESSAGES_LATENCY_COUNT.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn set_active_users(count: u64) {
+        ACTIVE_USERS.store(count, Ordering::Relaxed);
+    }
+
+    pub fn set_bridged_rooms(count: u64) {
+        BRIDGED_ROOMS.store(count, Ordering::Relaxed);
+    }
+
+    pub fn error_occurred() {
+        ERROR_COUNT.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn edit_processed() {
+        EDITS_PROCESSED.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn delete_processed() {
+        DELETES_PROCESSED.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn attachment_uploaded() {
+        ATTACHMENTS_UPLOADED.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn emoji_converted() {
+        EMOJI_CONVERTED.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 pub fn format_prometheus() -> String {
@@ -78,10 +120,25 @@ pub fn format_prometheus() -> String {
     let cache_hits = CACHE_HITS.load(Ordering::Relaxed);
     let cache_misses = CACHE_MISSES.load(Ordering::Relaxed);
     let presence_queue = PRESENCE_QUEUE_SIZE.load(Ordering::Relaxed);
+    let latency_total = MESSAGES_LATENCY_MS.load(Ordering::Relaxed);
+    let latency_count = MESSAGES_LATENCY_COUNT.load(Ordering::Relaxed);
+    let active_users = ACTIVE_USERS.load(Ordering::Relaxed);
+    let bridged_rooms = BRIDGED_ROOMS.load(Ordering::Relaxed);
+    let error_count = ERROR_COUNT.load(Ordering::Relaxed);
+    let edits = EDITS_PROCESSED.load(Ordering::Relaxed);
+    let deletes = DELETES_PROCESSED.load(Ordering::Relaxed);
+    let attachments = ATTACHMENTS_UPLOADED.load(Ordering::Relaxed);
+    let emoji = EMOJI_CONVERTED.load(Ordering::Relaxed);
 
     let total_cache = cache_hits + cache_misses;
     let cache_hit_rate = if total_cache > 0 {
         (cache_hits as f64 / total_cache as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    let avg_latency = if latency_count > 0 {
+        latency_total as f64 / latency_count as f64
     } else {
         0.0
     };
@@ -130,6 +187,38 @@ cache_hit_rate_percent {}
 # HELP presence_queue_size Current size of presence queue
 # TYPE presence_queue_size gauge
 presence_queue_size {}
+
+# HELP message_latency_avg_ms Average message processing latency in milliseconds
+# TYPE message_latency_avg_ms gauge
+message_latency_avg_ms {}
+
+# HELP active_users_total Number of active bridged users
+# TYPE active_users_total gauge
+active_users_total {}
+
+# HELP bridged_rooms_total Number of bridged rooms
+# TYPE bridged_rooms_total gauge
+bridged_rooms_total {}
+
+# HELP errors_total Total number of errors encountered
+# TYPE errors_total counter
+errors_total {}
+
+# HELP edits_processed_total Total number of message edits processed
+# TYPE edits_processed_total counter
+edits_processed_total {}
+
+# HELP deletes_processed_total Total number of message deletes processed
+# TYPE deletes_processed_total counter
+deletes_processed_total {}
+
+# HELP attachments_uploaded_total Total number of attachments uploaded
+# TYPE attachments_uploaded_total counter
+attachments_uploaded_total {}
+
+# HELP emoji_converted_total Total number of emojis converted
+# TYPE emoji_converted_total counter
+emoji_converted_total {}
 "#,
         uptime,
         matrix_received,
@@ -142,6 +231,14 @@ presence_queue_size {}
         cache_misses,
         cache_hit_rate,
         presence_queue,
+        avg_latency,
+        active_users,
+        bridged_rooms,
+        error_count,
+        edits,
+        deletes,
+        attachments,
+        emoji,
     )
 }
 
@@ -164,6 +261,10 @@ mod tests {
         Metrics::discord_message_failed();
         Metrics::cache_hit();
         Metrics::cache_miss();
+        Metrics::edit_processed();
+        Metrics::delete_processed();
+        Metrics::attachment_uploaded();
+        Metrics::emoji_converted();
 
         assert_eq!(MATRIX_MESSAGES_RECEIVED.load(Ordering::Relaxed), 1);
         assert_eq!(MATRIX_MESSAGES_SUCCESS.load(Ordering::Relaxed), 1);
@@ -171,6 +272,10 @@ mod tests {
         assert_eq!(DISCORD_MESSAGES_FAILED.load(Ordering::Relaxed), 1);
         assert_eq!(CACHE_HITS.load(Ordering::Relaxed), 1);
         assert_eq!(CACHE_MISSES.load(Ordering::Relaxed), 1);
+        assert_eq!(EDITS_PROCESSED.load(Ordering::Relaxed), 1);
+        assert_eq!(DELETES_PROCESSED.load(Ordering::Relaxed), 1);
+        assert_eq!(ATTACHMENTS_UPLOADED.load(Ordering::Relaxed), 1);
+        assert_eq!(EMOJI_CONVERTED.load(Ordering::Relaxed), 1);
     }
 
     #[test]
@@ -181,5 +286,13 @@ mod tests {
         assert!(output.contains("discord_messages_received"));
         assert!(output.contains("cache_hits_total"));
         assert!(output.contains("presence_queue_size"));
+        assert!(output.contains("message_latency_avg_ms"));
+        assert!(output.contains("active_users_total"));
+        assert!(output.contains("bridged_rooms_total"));
+        assert!(output.contains("errors_total"));
+        assert!(output.contains("edits_processed_total"));
+        assert!(output.contains("deletes_processed_total"));
+        assert!(output.contains("attachments_uploaded_total"));
+        assert!(output.contains("emoji_converted_total"));
     }
 }

@@ -490,7 +490,7 @@ mod tests {
             edit_of: None,
         });
 
-        assert_eq!(outbound.body, "\\*bold\\*".to_string());
+        assert_eq!(outbound.body, "*bold*".to_string());
         assert_eq!(outbound.reply_to, Some("discord-msg-1".to_string()));
         assert_eq!(
             outbound.attachments,

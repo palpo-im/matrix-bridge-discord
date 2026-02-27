@@ -35,8 +35,8 @@ impl MatrixToDiscordConverter {
     pub fn new(matrix_client: Arc<MatrixAppservice>) -> Self {
         Self {
             matrix_client,
-            ghost_user_regex: Regex::new(r"@_discord_(\d+):[^ ]+").unwrap(),
-            ghost_alias_regex: Regex::new(r"#_discord_(\d+):[^ ]+").unwrap(),
+            ghost_user_regex: Regex::new(r"@_discord_(\d+):[A-Za-z0-9.-]+").unwrap(),
+            ghost_alias_regex: Regex::new(r"#_discord_(\d+):[A-Za-z0-9.-]+").unwrap(),
             room_alias_regex: Regex::new(r"#([^:]+):([a-zA-Z0-9.-]+)").unwrap(),
             mxclink_regex: Regex::new(r"\[([^\]]+)\]\(mxc://[^)]+\)").unwrap(),
         }
@@ -190,7 +190,7 @@ impl MatrixToDiscordConverter {
 mod tests {
     use super::*;
 
-    fn make_converter() -> MatrixToDiscordConverter {
+    async fn make_converter() -> MatrixToDiscordConverter {
         let config = std::sync::Arc::new(crate::config::Config {
             bridge: crate::config::BridgeConfig {
                 domain: "example.org".to_string(),
@@ -266,9 +266,7 @@ mod tests {
             metrics: crate::config::MetricsConfig::default(),
         });
         
-        MatrixToDiscordConverter::new(Arc::new(
-            MatrixAppservice::new(config).await.unwrap()
-        ))
+        MatrixToDiscordConverter::new(Arc::new(MatrixAppservice::new(config).await.unwrap()))
     }
 
     #[tokio::test]
