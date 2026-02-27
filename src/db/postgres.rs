@@ -4,11 +4,11 @@ use diesel::pg::PgConnection;
 use diesel::prelude::*;
 
 use crate::db::manager::Pool;
-use crate::db::schema::{room_mappings, user_mappings};
+use crate::db::schema::{message_mappings, room_mappings, user_mappings};
 
 use super::{
     DatabaseError,
-    models::{RoomMapping, UserMapping},
+    models::{MessageMapping, RoomMapping, UserMapping},
 };
 
 #[derive(Debug, Clone, Queryable, Selectable)]
@@ -104,6 +104,48 @@ struct UpdateUserMapping<'a> {
     discord_username: &'a str,
     discord_discriminator: &'a str,
     discord_avatar: Option<&'a str>,
+    updated_at: &'a DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Queryable, Selectable)]
+#[diesel(table_name = message_mappings)]
+struct DbMessageMapping {
+    id: i64,
+    discord_message_id: String,
+    matrix_room_id: String,
+    matrix_event_id: String,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+impl From<DbMessageMapping> for MessageMapping {
+    fn from(value: DbMessageMapping) -> Self {
+        Self {
+            id: value.id,
+            discord_message_id: value.discord_message_id,
+            matrix_room_id: value.matrix_room_id,
+            matrix_event_id: value.matrix_event_id,
+            created_at: value.created_at,
+            updated_at: value.updated_at,
+        }
+    }
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = message_mappings)]
+struct NewMessageMapping<'a> {
+    discord_message_id: &'a str,
+    matrix_room_id: &'a str,
+    matrix_event_id: &'a str,
+    created_at: &'a DateTime<Utc>,
+    updated_at: &'a DateTime<Utc>,
+}
+
+#[derive(AsChangeset)]
+#[diesel(table_name = message_mappings)]
+struct UpdateMessageMapping<'a> {
+    matrix_room_id: &'a str,
+    matrix_event_id: &'a str,
     updated_at: &'a DateTime<Utc>,
 }
 
@@ -352,6 +394,96 @@ impl super::UserStore for PostgresUserStore {
         let pool = self.pool.clone();
         with_connection(pool, move |conn| {
             diesel::delete(user_mappings::table.filter(user_mappings::id.eq(id)))
+                .execute(conn)
+                .map(|_| ())
+                .map_err(|e| DatabaseError::Query(e.to_string()))
+        })
+        .await
+    }
+}
+
+pub struct PostgresMessageStore {
+    pool: Pool,
+}
+
+impl PostgresMessageStore {
+    pub fn new(pool: Pool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl super::MessageStore for PostgresMessageStore {
+    async fn get_by_discord_message_id(
+        &self,
+        discord_message_id_param: &str,
+    ) -> Result<Option<MessageMapping>, DatabaseError> {
+        let pool = self.pool.clone();
+        let discord_message_id_param = discord_message_id_param.to_string();
+        with_connection(pool, move |conn| {
+            use crate::db::schema::message_mappings::dsl::*;
+            message_mappings
+                .filter(discord_message_id.eq(discord_message_id_param))
+                .select(DbMessageMapping::as_select())
+                .first::<DbMessageMapping>(conn)
+                .optional()
+                .map(|value| value.map(Into::into))
+                .map_err(|e| DatabaseError::Query(e.to_string()))
+        })
+        .await
+    }
+
+    async fn upsert_message_mapping(&self, mapping: &MessageMapping) -> Result<(), DatabaseError> {
+        let pool = self.pool.clone();
+        let mapping = mapping.clone();
+        with_connection(pool, move |conn| {
+            use crate::db::schema::message_mappings::dsl::*;
+
+            let existing = message_mappings
+                .filter(discord_message_id.eq(&mapping.discord_message_id))
+                .select(DbMessageMapping::as_select())
+                .first::<DbMessageMapping>(conn)
+                .optional()
+                .map_err(|e| DatabaseError::Query(e.to_string()))?;
+
+            if let Some(existing) = existing {
+                let changes = UpdateMessageMapping {
+                    matrix_room_id: &mapping.matrix_room_id,
+                    matrix_event_id: &mapping.matrix_event_id,
+                    updated_at: &mapping.updated_at,
+                };
+                diesel::update(message_mappings.filter(id.eq(existing.id)))
+                    .set(changes)
+                    .execute(conn)
+                    .map(|_| ())
+                    .map_err(|e| DatabaseError::Query(e.to_string()))
+            } else {
+                let new_mapping = NewMessageMapping {
+                    discord_message_id: &mapping.discord_message_id,
+                    matrix_room_id: &mapping.matrix_room_id,
+                    matrix_event_id: &mapping.matrix_event_id,
+                    created_at: &mapping.created_at,
+                    updated_at: &mapping.updated_at,
+                };
+                diesel::insert_into(message_mappings)
+                    .values(new_mapping)
+                    .execute(conn)
+                    .map(|_| ())
+                    .map_err(|e| DatabaseError::Query(e.to_string()))
+            }
+        })
+        .await
+    }
+
+    async fn delete_by_discord_message_id(
+        &self,
+        discord_message_id_param: &str,
+    ) -> Result<(), DatabaseError> {
+        let pool = self.pool.clone();
+        let discord_message_id_param = discord_message_id_param.to_string();
+        with_connection(pool, move |conn| {
+            use crate::db::schema::message_mappings::dsl::*;
+            diesel::delete(message_mappings.filter(discord_message_id.eq(discord_message_id_param)))
                 .execute(conn)
                 .map(|_| ())
                 .map_err(|e| DatabaseError::Query(e.to_string()))

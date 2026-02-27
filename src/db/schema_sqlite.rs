@@ -36,4 +36,20 @@ diesel::table! {
     }
 }
 
-diesel::allow_tables_to_appear_in_same_query!(room_mappings, user_mappings, processed_events,);
+diesel::table! {
+    message_mappings (id) {
+        id -> Integer,
+        discord_message_id -> Text,
+        matrix_room_id -> Text,
+        matrix_event_id -> Text,
+        created_at -> Text,
+        updated_at -> Text,
+    }
+}
+
+diesel::allow_tables_to_appear_in_same_query!(
+    room_mappings,
+    user_mappings,
+    processed_events,
+    message_mappings,
+);

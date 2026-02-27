@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
 use super::DatabaseError;
-use super::models::{RoomMapping, UserMapping};
+use super::models::{MessageMapping, RoomMapping, UserMapping};
 
 #[async_trait]
 pub trait RoomStore: Send + Sync {
@@ -34,4 +34,17 @@ pub trait UserStore: Send + Sync {
     async fn create_user_mapping(&self, mapping: &UserMapping) -> Result<(), DatabaseError>;
     async fn update_user_mapping(&self, mapping: &UserMapping) -> Result<(), DatabaseError>;
     async fn delete_user_mapping(&self, id: i64) -> Result<(), DatabaseError>;
+}
+
+#[async_trait]
+pub trait MessageStore: Send + Sync {
+    async fn get_by_discord_message_id(
+        &self,
+        discord_message_id: &str,
+    ) -> Result<Option<MessageMapping>, DatabaseError>;
+    async fn upsert_message_mapping(&self, mapping: &MessageMapping) -> Result<(), DatabaseError>;
+    async fn delete_by_discord_message_id(
+        &self,
+        discord_message_id: &str,
+    ) -> Result<(), DatabaseError>;
 }

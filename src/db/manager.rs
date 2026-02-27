@@ -1,9 +1,9 @@
 use crate::config::{DatabaseConfig as ConfigDatabaseConfig, DbType as ConfigDbType};
-use crate::db::{DatabaseError, RoomStore, UserStore};
+use crate::db::{DatabaseError, MessageStore, RoomStore, UserStore};
 use std::sync::Arc;
 
 #[cfg(feature = "postgres")]
-use crate::db::postgres::{PostgresRoomStore, PostgresUserStore};
+use crate::db::postgres::{PostgresMessageStore, PostgresRoomStore, PostgresUserStore};
 #[cfg(feature = "postgres")]
 use diesel::pg::PgConnection;
 #[cfg(feature = "postgres")]
@@ -15,7 +15,7 @@ use diesel::RunQueryDsl;
 pub type Pool = r2d2::Pool<ConnectionManager<PgConnection>>;
 
 #[cfg(feature = "sqlite")]
-use crate::db::sqlite::{SqliteRoomStore, SqliteUserStore};
+use crate::db::sqlite::{SqliteMessageStore, SqliteRoomStore, SqliteUserStore};
 #[cfg(feature = "sqlite")]
 use diesel::sqlite::SqliteConnection;
 #[cfg(feature = "sqlite")]
@@ -29,6 +29,7 @@ pub struct DatabaseManager {
     sqlite_path: Option<String>,
     room_store: Arc<dyn RoomStore>,
     user_store: Arc<dyn UserStore>,
+    message_store: Arc<dyn MessageStore>,
     db_type: DbType,
 }
 
@@ -70,6 +71,7 @@ impl DatabaseManager {
 
                 let room_store = Arc::new(PostgresRoomStore::new(pool.clone()));
                 let user_store = Arc::new(PostgresUserStore::new(pool.clone()));
+                let message_store = Arc::new(PostgresMessageStore::new(pool.clone()));
 
                 Ok(Self {
                     postgres_pool: Some(pool),
@@ -77,6 +79,7 @@ impl DatabaseManager {
                     sqlite_path: None,
                     room_store,
                     user_store,
+                    message_store,
                     db_type,
                 })
             }
@@ -87,6 +90,7 @@ impl DatabaseManager {
 
                 let room_store = Arc::new(SqliteRoomStore::new(path_arc.clone()));
                 let user_store = Arc::new(SqliteUserStore::new(path_arc));
+                let message_store = Arc::new(SqliteMessageStore::new(Arc::new(path.clone())));
 
                 Ok(Self {
                     #[cfg(feature = "postgres")]
@@ -94,6 +98,7 @@ impl DatabaseManager {
                     sqlite_path: Some(path),
                     room_store,
                     user_store,
+                    message_store,
                     db_type,
                 })
             }
@@ -181,6 +186,16 @@ impl DatabaseManager {
                 )
                 "#,
                 r#"
+                CREATE TABLE IF NOT EXISTS message_mappings (
+                    id BIGSERIAL PRIMARY KEY,
+                    discord_message_id TEXT NOT NULL UNIQUE,
+                    matrix_room_id TEXT NOT NULL,
+                    matrix_event_id TEXT NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+                )
+                "#,
+                r#"
                 CREATE TABLE IF NOT EXISTS user_activity (
                     id BIGSERIAL PRIMARY KEY,
                     user_mapping_id BIGINT NOT NULL REFERENCES user_mappings(id) ON DELETE CASCADE,
@@ -194,6 +209,8 @@ impl DatabaseManager {
                 "CREATE INDEX IF NOT EXISTS idx_room_mappings_matrix_id ON room_mappings(matrix_room_id)",
                 "CREATE INDEX IF NOT EXISTS idx_room_mappings_discord_id ON room_mappings(discord_channel_id)",
                 "CREATE INDEX IF NOT EXISTS idx_processed_events_event_id ON processed_events(event_id)",
+                "CREATE INDEX IF NOT EXISTS idx_message_mappings_discord_id ON message_mappings(discord_message_id)",
+                "CREATE INDEX IF NOT EXISTS idx_message_mappings_matrix_event ON message_mappings(matrix_event_id)",
                 "CREATE INDEX IF NOT EXISTS idx_user_activity_user_mapping ON user_activity(user_mapping_id)",
                 "CREATE INDEX IF NOT EXISTS idx_user_activity_timestamp ON user_activity(timestamp)",
             ];
@@ -252,6 +269,16 @@ impl DatabaseManager {
                 )
                 "#,
                 r#"
+                CREATE TABLE IF NOT EXISTS message_mappings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    discord_message_id TEXT NOT NULL UNIQUE,
+                    matrix_room_id TEXT NOT NULL,
+                    matrix_event_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+                "#,
+                r#"
                 CREATE TABLE IF NOT EXISTS user_activity (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_mapping_id INTEGER NOT NULL REFERENCES user_mappings(id) ON DELETE CASCADE,
@@ -265,6 +292,8 @@ impl DatabaseManager {
                 "CREATE INDEX IF NOT EXISTS idx_room_mappings_matrix_id ON room_mappings(matrix_room_id)",
                 "CREATE INDEX IF NOT EXISTS idx_room_mappings_discord_id ON room_mappings(discord_channel_id)",
                 "CREATE INDEX IF NOT EXISTS idx_processed_events_event_id ON processed_events(event_id)",
+                "CREATE INDEX IF NOT EXISTS idx_message_mappings_discord_id ON message_mappings(discord_message_id)",
+                "CREATE INDEX IF NOT EXISTS idx_message_mappings_matrix_event ON message_mappings(matrix_event_id)",
                 "CREATE INDEX IF NOT EXISTS idx_user_activity_user_mapping ON user_activity(user_mapping_id)",
                 "CREATE INDEX IF NOT EXISTS idx_user_activity_timestamp ON user_activity(timestamp)",
             ];
@@ -287,6 +316,10 @@ impl DatabaseManager {
 
     pub fn user_store(&self) -> Arc<dyn UserStore> {
         self.user_store.clone()
+    }
+
+    pub fn message_store(&self) -> Arc<dyn MessageStore> {
+        self.message_store.clone()
     }
 
     #[cfg(feature = "postgres")]

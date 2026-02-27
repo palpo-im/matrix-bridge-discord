@@ -1,12 +1,12 @@
 use std::sync::Arc;
-use std::{collections::HashMap, collections::HashSet, time::Duration};
+use std::{collections::HashSet, time::Duration};
 
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Utc;
 use tracing::{debug, info, warn};
 
-use crate::db::{DatabaseManager, RoomMapping};
+use crate::db::{DatabaseManager, MessageMapping, RoomMapping};
 use crate::discord::{
     DiscordClient, DiscordCommandHandler, DiscordCommandOutcome, ModerationAction,
 };
@@ -36,12 +36,6 @@ pub struct DiscordMessageContext {
     pub permissions: HashSet<String>,
 }
 
-#[derive(Debug, Clone)]
-struct MatrixMessageLink {
-    matrix_room_id: String,
-    matrix_event_id: String,
-}
-
 #[derive(Clone)]
 pub struct BridgeCore {
     matrix_client: Arc<MatrixAppservice>,
@@ -52,7 +46,6 @@ pub struct BridgeCore {
     discord_command_handler: Arc<DiscordCommandHandler>,
     presence_handler: Arc<PresenceHandler>,
     provisioning: Arc<ProvisioningCoordinator>,
-    message_links: Arc<tokio::sync::Mutex<HashMap<String, MatrixMessageLink>>>,
 }
 
 impl BridgeCore {
@@ -74,7 +67,6 @@ impl BridgeCore {
             discord_command_handler: Arc::new(DiscordCommandHandler::new()),
             presence_handler: Arc::new(PresenceHandler::new(None)),
             provisioning: Arc::new(ProvisioningCoordinator::default()),
-            message_links: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             matrix_client,
             discord_client,
             db_manager,
@@ -665,13 +657,21 @@ impl BridgeCore {
         });
 
         if let Some(reply_discord_message_id) = outbound.reply_to.clone()
-            && let Some(link) = self.lookup_link(&reply_discord_message_id).await
+            && let Some(link) = self
+                .db_manager
+                .message_store()
+                .get_by_discord_message_id(&reply_discord_message_id)
+                .await?
         {
             outbound.reply_to = Some(link.matrix_event_id);
         }
 
         if let Some(edit_discord_message_id) = outbound.edit_of.clone()
-            && let Some(link) = self.lookup_link(&edit_discord_message_id).await
+            && let Some(link) = self
+                .db_manager
+                .message_store()
+                .get_by_discord_message_id(&edit_discord_message_id)
+                .await?
         {
             outbound.edit_of = Some(link.matrix_event_id);
         }
@@ -691,14 +691,17 @@ impl BridgeCore {
             .await?;
 
         if let Some(source_message_id) = ctx.source_message_id {
-            self.remember_link(
-                source_message_id,
-                MatrixMessageLink {
+            self.db_manager
+                .message_store()
+                .upsert_message_mapping(&MessageMapping {
+                    id: 0,
+                    discord_message_id: source_message_id,
                     matrix_room_id: mapping.matrix_room_id.clone(),
                     matrix_event_id,
-                },
-            )
-            .await;
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                })
+                .await?;
         }
         Ok(())
     }
@@ -708,7 +711,12 @@ impl BridgeCore {
         _discord_channel_id: &str,
         discord_message_id: &str,
     ) -> Result<()> {
-        let Some(link) = self.take_link(discord_message_id).await else {
+        let Some(link) = self
+            .db_manager
+            .message_store()
+            .get_by_discord_message_id(discord_message_id)
+            .await?
+        else {
             return Ok(());
         };
 
@@ -718,6 +726,10 @@ impl BridgeCore {
                 &link.matrix_event_id,
                 Some("Deleted on Discord"),
             )
+            .await?;
+        self.db_manager
+            .message_store()
+            .delete_by_discord_message_id(discord_message_id)
             .await?;
         Ok(())
     }
@@ -833,22 +845,6 @@ impl BridgeCore {
 
     pub fn db(&self) -> Arc<DatabaseManager> {
         self.db_manager.clone()
-    }
-
-    async fn remember_link(&self, discord_message_id: String, link: MatrixMessageLink) {
-        self.message_links.lock().await.insert(discord_message_id, link);
-    }
-
-    async fn lookup_link(&self, discord_message_id: &str) -> Option<MatrixMessageLink> {
-        self.message_links
-            .lock()
-            .await
-            .get(discord_message_id)
-            .cloned()
-    }
-
-    async fn take_link(&self, discord_message_id: &str) -> Option<MatrixMessageLink> {
-        self.message_links.lock().await.remove(discord_message_id)
     }
 }
 

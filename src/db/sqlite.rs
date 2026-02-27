@@ -4,11 +4,11 @@ use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
 use std::sync::Arc;
 
-use crate::db::schema_sqlite::{room_mappings, user_mappings};
+use crate::db::schema_sqlite::{message_mappings, room_mappings, user_mappings};
 
 use super::{
     DatabaseError,
-    models::{RoomMapping, UserMapping},
+    models::{MessageMapping, RoomMapping, UserMapping},
 };
 
 // Helper function to convert DateTime to ISO string for SQLite
@@ -117,6 +117,48 @@ struct UpdateUserMapping<'a> {
     discord_username: &'a str,
     discord_discriminator: &'a str,
     discord_avatar: Option<&'a str>,
+    updated_at: String,
+}
+
+#[derive(Debug, Clone, Queryable, Selectable)]
+#[diesel(table_name = message_mappings)]
+struct DbMessageMapping {
+    id: i32,
+    discord_message_id: String,
+    matrix_room_id: String,
+    matrix_event_id: String,
+    created_at: String,
+    updated_at: String,
+}
+
+impl DbMessageMapping {
+    fn to_message_mapping(&self) -> Result<MessageMapping, DatabaseError> {
+        Ok(MessageMapping {
+            id: self.id as i64,
+            discord_message_id: self.discord_message_id.clone(),
+            matrix_room_id: self.matrix_room_id.clone(),
+            matrix_event_id: self.matrix_event_id.clone(),
+            created_at: string_to_datetime(&self.created_at)?,
+            updated_at: string_to_datetime(&self.updated_at)?,
+        })
+    }
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = message_mappings)]
+struct NewMessageMapping<'a> {
+    discord_message_id: &'a str,
+    matrix_room_id: &'a str,
+    matrix_event_id: &'a str,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(AsChangeset)]
+#[diesel(table_name = message_mappings)]
+struct UpdateMessageMapping<'a> {
+    matrix_room_id: &'a str,
+    matrix_event_id: &'a str,
     updated_at: String,
 }
 
@@ -386,6 +428,105 @@ impl super::UserStore for SqliteUserStore {
         tokio::task::spawn_blocking(move || {
             let mut conn = establish_connection(&db_path)?;
             diesel::delete(user_mappings::table.filter(user_mappings::id.eq(id)))
+                .execute(&mut conn)
+                .map(|_| ())
+                .map_err(|e| DatabaseError::Query(e.to_string()))
+        })
+        .await
+        .map_err(|e| DatabaseError::Query(format!("database task failed: {e}")))?
+    }
+}
+
+pub struct SqliteMessageStore {
+    db_path: Arc<String>,
+}
+
+impl SqliteMessageStore {
+    pub fn new(db_path: Arc<String>) -> Self {
+        Self { db_path }
+    }
+}
+
+#[async_trait]
+impl super::MessageStore for SqliteMessageStore {
+    async fn get_by_discord_message_id(
+        &self,
+        discord_message_id_param: &str,
+    ) -> Result<Option<MessageMapping>, DatabaseError> {
+        let discord_message_id_param = discord_message_id_param.to_string();
+        let db_path = self.db_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = establish_connection(&db_path)?;
+            use crate::db::schema_sqlite::message_mappings::dsl::*;
+            message_mappings
+                .filter(discord_message_id.eq(discord_message_id_param))
+                .select(DbMessageMapping::as_select())
+                .first::<DbMessageMapping>(&mut conn)
+                .optional()
+                .map_err(|e| DatabaseError::Query(e.to_string()))?
+                .map(|m| m.to_message_mapping())
+                .transpose()
+        })
+        .await
+        .map_err(|e| DatabaseError::Query(format!("database task failed: {e}")))?
+    }
+
+    async fn upsert_message_mapping(&self, mapping: &MessageMapping) -> Result<(), DatabaseError> {
+        let mapping = mapping.clone();
+        let db_path = self.db_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = establish_connection(&db_path)?;
+            use crate::db::schema_sqlite::message_mappings::dsl::*;
+
+            let existing = message_mappings
+                .filter(discord_message_id.eq(&mapping.discord_message_id))
+                .select(DbMessageMapping::as_select())
+                .first::<DbMessageMapping>(&mut conn)
+                .optional()
+                .map_err(|e| DatabaseError::Query(e.to_string()))?;
+
+            if let Some(existing) = existing {
+                let changes = UpdateMessageMapping {
+                    matrix_room_id: &mapping.matrix_room_id,
+                    matrix_event_id: &mapping.matrix_event_id,
+                    updated_at: datetime_to_string(&mapping.updated_at),
+                };
+
+                diesel::update(message_mappings.filter(id.eq(existing.id)))
+                    .set(changes)
+                    .execute(&mut conn)
+                    .map(|_| ())
+                    .map_err(|e| DatabaseError::Query(e.to_string()))
+            } else {
+                let new_mapping = NewMessageMapping {
+                    discord_message_id: &mapping.discord_message_id,
+                    matrix_room_id: &mapping.matrix_room_id,
+                    matrix_event_id: &mapping.matrix_event_id,
+                    created_at: datetime_to_string(&mapping.created_at),
+                    updated_at: datetime_to_string(&mapping.updated_at),
+                };
+
+                diesel::insert_into(message_mappings)
+                    .values(new_mapping)
+                    .execute(&mut conn)
+                    .map(|_| ())
+                    .map_err(|e| DatabaseError::Query(e.to_string()))
+            }
+        })
+        .await
+        .map_err(|e| DatabaseError::Query(format!("database task failed: {e}")))?
+    }
+
+    async fn delete_by_discord_message_id(
+        &self,
+        discord_message_id_param: &str,
+    ) -> Result<(), DatabaseError> {
+        let discord_message_id_param = discord_message_id_param.to_string();
+        let db_path = self.db_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = establish_connection(&db_path)?;
+            use crate::db::schema_sqlite::message_mappings::dsl::*;
+            diesel::delete(message_mappings.filter(discord_message_id.eq(discord_message_id_param)))
                 .execute(&mut conn)
                 .map(|_| ())
                 .map_err(|e| DatabaseError::Query(e.to_string()))

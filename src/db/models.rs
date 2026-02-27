@@ -32,3 +32,13 @@ pub struct ProcessedEvent {
     pub source: String, // 'matrix' or 'discord'
     pub processed_at: DateTime<Utc>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageMapping {
+    pub id: i64,
+    pub discord_message_id: String,
+    pub matrix_room_id: String,
+    pub matrix_event_id: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
