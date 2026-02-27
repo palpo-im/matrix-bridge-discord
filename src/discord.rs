@@ -2,7 +2,6 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 
@@ -84,7 +83,7 @@ impl Default for DiscordLoginState {
 #[derive(Clone)]
 struct WebhookInfo {
     id: u64,
-    token: String,
+    url: String,
 }
 
 struct ReadySignalHandler {
@@ -790,12 +789,7 @@ impl DiscordClient {
         username: &str,
         avatar_url: Option<&str>,
     ) -> Result<String> {
-        let webhook_url = format!(
-            "https://discord.com/api/webhooks/{}/{}",
-            webhook_info.id, webhook_info.token
-        );
-
-        let webhook = Webhook::from_url(http, &webhook_url).await
+        let webhook = Webhook::from_url(http, &webhook_info.url).await
             .map_err(|e| anyhow!("failed to parse webhook url: {}", e))?;
 
         use serenity::builder::CreateEmbed;
@@ -854,13 +848,12 @@ impl DiscordClient {
         let existing = webhooks.iter().find(|w| w.name.as_deref() == Some(webhook_name));
 
         let info = if let Some(webhook) = existing {
-            let token = webhook.token.clone()
-                .ok_or_else(|| anyhow!("webhook has no token"))?
-                .expose_secret()
-                .to_string();
+            let url = webhook
+                .url()
+                .map_err(|e| anyhow!("webhook has no usable url: {}", e))?;
             WebhookInfo {
                 id: webhook.id.get(),
-                token,
+                url,
             }
         } else {
             use serenity::builder::CreateWebhook;
@@ -868,15 +861,14 @@ impl DiscordClient {
                 .create_webhook(http, CreateWebhook::new(webhook_name))
                 .await
                 .map_err(|e| anyhow!("failed to create webhook: {}", e))?;
-            
-            let token = webhook.token.clone()
-                .ok_or_else(|| anyhow!("created webhook has no token"))?
-                .expose_secret()
-                .to_string();
-            
+
+            let url = webhook
+                .url()
+                .map_err(|e| anyhow!("created webhook has no usable url: {}", e))?;
+
             WebhookInfo {
                 id: webhook.id.get(),
-                token,
+                url,
             }
         };
 
@@ -899,13 +891,8 @@ impl DiscordClient {
         avatar_url: Option<&str>,
     ) -> Result<String> {
         use serenity::builder::{ExecuteWebhook, EditWebhookMessage};
-        
-        let webhook_url = format!(
-            "https://discord.com/api/webhooks/{}/{}",
-            webhook_info.id, webhook_info.token
-        );
-        
-        let webhook = Webhook::from_url(http, &webhook_url).await
+
+        let webhook = Webhook::from_url(http, &webhook_info.url).await
             .map_err(|e| anyhow!("failed to parse webhook url: {}", e))?;
 
         if let Some(message_id_str) = edit_of {
@@ -1049,12 +1036,7 @@ impl DiscordClient {
         username: &str,
         avatar_url: Option<&str>,
     ) -> Result<String> {
-        let webhook_url = format!(
-            "https://discord.com/api/webhooks/{}/{}",
-            webhook_info.id, webhook_info.token
-        );
-
-        let webhook = Webhook::from_url(http, &webhook_url).await
+        let webhook = Webhook::from_url(http, &webhook_info.url).await
             .map_err(|e| anyhow!("failed to parse webhook url: {}", e))?;
 
         let attachment = CreateAttachment::bytes(data.to_vec(), filename);

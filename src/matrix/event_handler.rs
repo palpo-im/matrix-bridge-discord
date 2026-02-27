@@ -7,7 +7,7 @@ use tracing::{debug, info, warn};
 use super::{MatrixAppservice, MatrixEvent};
 use crate::bridge::BridgeCore;
 
-const AGE_LIMIT_MS: i64 = 900000;
+const DEFAULT_AGE_LIMIT_MS: i64 = 900_000;
 
 #[async_trait]
 pub trait MatrixEventHandler: Send + Sync {
@@ -101,14 +101,30 @@ impl MatrixEventHandler for MatrixEventHandlerImpl {
 
 pub struct MatrixEventProcessor {
     event_handler: Arc<dyn MatrixEventHandler>,
+    age_limit_ms: i64,
 }
 
 impl MatrixEventProcessor {
     pub fn new(event_handler: Arc<dyn MatrixEventHandler>) -> Self {
-        Self { event_handler }
+        Self {
+            event_handler,
+            age_limit_ms: DEFAULT_AGE_LIMIT_MS,
+        }
     }
 
-    fn check_event_age(event: &MatrixEvent) -> bool {
+    pub fn with_age_limit(event_handler: Arc<dyn MatrixEventHandler>, age_limit_ms: u64) -> Self {
+        let age_limit_ms = std::cmp::min(age_limit_ms, i64::MAX as u64) as i64;
+        Self {
+            event_handler,
+            age_limit_ms,
+        }
+    }
+
+    fn check_event_age(event: &MatrixEvent, age_limit_ms: i64) -> bool {
+        if age_limit_ms <= 0 {
+            return true;
+        }
+
         if let Some(ts_str) = &event.timestamp {
             if let Ok(ts) = ts_str.parse::<i64>() {
                 let now = chrono::Utc::now().timestamp_millis();
@@ -117,10 +133,10 @@ impl MatrixEventProcessor {
                     return true;
                 }
                 let age = now - ts;
-                if age > AGE_LIMIT_MS {
+                if age > age_limit_ms {
                     info!(
                         "skipping event due to age {}ms > {}ms event_id={:?} room_id={} type={}",
-                        age, AGE_LIMIT_MS, event.event_id, event.room_id, event.event_type
+                        age, age_limit_ms, event.event_id, event.room_id, event.event_type
                     );
                     return false;
                 }
@@ -130,7 +146,7 @@ impl MatrixEventProcessor {
     }
 
     pub async fn process_event(&self, event: MatrixEvent) -> Result<()> {
-        if !Self::check_event_age(&event) {
+        if !Self::check_event_age(&event, self.age_limit_ms) {
             return Ok(());
         }
 
@@ -168,26 +184,26 @@ mod tests {
     fn check_event_age_allows_recent_events() {
         let now = chrono::Utc::now().timestamp_millis();
         let event = make_event(Some(&now.to_string()));
-        assert!(MatrixEventProcessor::check_event_age(&event));
+        assert!(MatrixEventProcessor::check_event_age(&event, DEFAULT_AGE_LIMIT_MS));
     }
 
     #[test]
     fn check_event_age_rejects_old_events() {
         let old_ts = chrono::Utc::now().timestamp_millis() - 1_000_000;
         let event = make_event(Some(&old_ts.to_string()));
-        assert!(!MatrixEventProcessor::check_event_age(&event));
+        assert!(!MatrixEventProcessor::check_event_age(&event, DEFAULT_AGE_LIMIT_MS));
     }
 
     #[test]
     fn check_event_age_allows_events_without_timestamp() {
         let event = make_event(None);
-        assert!(MatrixEventProcessor::check_event_age(&event));
+        assert!(MatrixEventProcessor::check_event_age(&event, DEFAULT_AGE_LIMIT_MS));
     }
 
     #[test]
     fn check_event_age_allows_future_events() {
         let future_ts = chrono::Utc::now().timestamp_millis() + 60_000;
         let event = make_event(Some(&future_ts.to_string()));
-        assert!(MatrixEventProcessor::check_event_age(&event));
+        assert!(MatrixEventProcessor::check_event_age(&event, DEFAULT_AGE_LIMIT_MS));
     }
 }

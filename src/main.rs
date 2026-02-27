@@ -49,7 +49,10 @@ async fn main() -> Result<()> {
     discord_client.set_bridge(bridge.clone()).await;
 
     event_handler.set_bridge(bridge.clone());
-    let processor = Arc::new(matrix::MatrixEventProcessor::new(Arc::new(event_handler)));
+    let processor = Arc::new(matrix::MatrixEventProcessor::with_age_limit(
+        Arc::new(event_handler),
+        config.limits.matrix_event_age_limit_ms,
+    ));
     matrix_client.set_processor(processor).await;
 
     let web_server = WebServer::new(

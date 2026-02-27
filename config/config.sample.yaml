@@ -69,6 +69,7 @@ limits:
   room_ghost_join_delay: 6000
   discord_send_delay: 1500
   room_count: -1
+  matrix_event_age_limit_ms: 900000
 
 ghosts:
   nick_pattern: ":nick"

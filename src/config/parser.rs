@@ -320,6 +320,8 @@ pub struct LimitsConfig {
     pub discord_send_delay: u64,
     #[serde(default = "default_room_count")]
     pub room_count: i32,
+    #[serde(default = "default_matrix_event_age_limit_ms")]
+    pub matrix_event_age_limit_ms: u64,
 }
 
 impl Default for LimitsConfig {
@@ -328,6 +330,7 @@ impl Default for LimitsConfig {
             room_ghost_join_delay: 6000,
             discord_send_delay: 1500,
             room_count: -1,
+            matrix_event_age_limit_ms: 900_000,
         }
     }
 }
@@ -614,6 +617,10 @@ fn default_discord_send_delay() -> u64 {
 
 fn default_room_count() -> i32 {
     -1
+}
+
+fn default_matrix_event_age_limit_ms() -> u64 {
+    900_000
 }
 
 fn default_nick_pattern() -> String {
