@@ -120,6 +120,10 @@ fn ghost_user_id(discord_user_id: &str, domain: &str) -> String {
     format!("@_discord_{}:{}", discord_user_id, domain)
 }
 
+fn is_namespaced_user(user_id: &str) -> bool {
+    user_id.starts_with("@_discord_")
+}
+
 impl MatrixAppservice {
     pub async fn new(config: Arc<Config>) -> Result<Self> {
         info!(
@@ -163,6 +167,10 @@ impl MatrixAppservice {
 
     pub fn bot_user_id(&self) -> String {
         format!("@_discord_:{}", self.config.bridge.domain)
+    }
+
+    pub fn is_namespaced_user(&self, user_id: &str) -> bool {
+        is_namespaced_user(user_id)
     }
 
     pub async fn set_processor(&self, processor: Arc<MatrixEventProcessor>) {
@@ -449,7 +457,7 @@ impl MatrixAppservice {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_matrix_message_content, ghost_user_id};
+    use super::{build_matrix_message_content, ghost_user_id, is_namespaced_user};
 
     #[test]
     fn message_content_adds_reply_relation() {
@@ -474,6 +482,14 @@ mod tests {
     fn ghost_user_id_uses_expected_namespace() {
         let user_id = ghost_user_id("12345", "example.org");
         assert_eq!(user_id, "@_discord_12345:example.org");
+    }
+
+    #[test]
+    fn is_namespaced_user_detects_ghost_users() {
+        assert!(is_namespaced_user("@_discord_12345:example.org"));
+        assert!(is_namespaced_user("@_discord_:example.org"));
+        assert!(!is_namespaced_user("@alice:example.org"));
+        assert!(!is_namespaced_user("@_discord:example.org"));
     }
 
     #[test]

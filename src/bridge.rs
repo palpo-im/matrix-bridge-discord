@@ -145,6 +145,14 @@ impl BridgeCore {
     }
 
     pub async fn handle_matrix_message(&self, event: &MatrixEvent) -> Result<()> {
+        if self.matrix_client.is_namespaced_user(&event.sender) {
+            debug!(
+                "matrix inbound dropped room_id={} sender={} reason=echo_from_ghost",
+                event.room_id, event.sender
+            );
+            return Ok(());
+        }
+
         let body = event
             .content
             .as_ref()
@@ -272,6 +280,14 @@ impl BridgeCore {
     }
 
     pub async fn handle_matrix_member(&self, event: &MatrixEvent) -> Result<()> {
+        if self.matrix_client.is_namespaced_user(&event.sender) {
+            debug!(
+                "matrix member dropped room_id={} sender={} reason=echo_from_ghost",
+                event.room_id, event.sender
+            );
+            return Ok(());
+        }
+
         if let Some(content) = event.content.as_ref().and_then(|c| c.as_object()) {
             if let Some(membership) = content.get("membership").and_then(|v| v.as_str()) {
                 let bot_user_id = self.matrix_client.bot_user_id();
