@@ -18,6 +18,17 @@ pub(crate) struct TypingRequest {
 }
 
 pub(crate) const DISCORD_TYPING_TIMEOUT_MS: u64 = 4000;
+const MAX_PREVIEW_CHARS: usize = 120;
+
+pub(crate) fn preview_text(value: &str) -> String {
+    let mut chars = value.chars();
+    let preview: String = chars.by_ref().take(MAX_PREVIEW_CHARS).collect();
+    if chars.next().is_some() {
+        format!("{preview}…")
+    } else {
+        preview
+    }
+}
 
 pub(crate) fn apply_message_relation_mappings(
     outbound: &mut OutboundMatrixMessage,
@@ -73,7 +84,7 @@ mod tests {
     use super::{
         apply_message_relation_mappings, build_discord_delete_redaction_request,
         build_discord_typing_request, discord_delete_redaction_request,
-        should_forward_discord_typing, OutboundMatrixMessage,
+        preview_text, should_forward_discord_typing, OutboundMatrixMessage,
     };
     use crate::db::{MessageMapping, RoomMapping};
 
@@ -196,5 +207,19 @@ mod tests {
         let mapping = room_mapping();
         let should_forward = should_forward_discord_typing(false, Some(&mapping));
         assert!(should_forward);
+    }
+
+    #[test]
+    fn preview_text_returns_original_when_short() {
+        let text = "short message";
+        assert_eq!(preview_text(text), text);
+    }
+
+    #[test]
+    fn preview_text_truncates_and_appends_ellipsis_when_long() {
+        let text = "x".repeat(130);
+        let preview = preview_text(&text);
+        assert_eq!(preview.chars().count(), 121);
+        assert!(preview.ends_with('…'));
     }
 }

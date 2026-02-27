@@ -19,7 +19,7 @@ pub mod provisioning;
 
 use self::logic::{
     apply_message_relation_mappings, build_discord_typing_request,
-    discord_delete_redaction_request, should_forward_discord_typing,
+    discord_delete_redaction_request, preview_text, should_forward_discord_typing,
 };
 use self::message_flow::{
     DiscordInboundMessage, MessageFlow, OutboundDiscordMessage, OutboundMatrixMessage,
@@ -932,16 +932,5 @@ fn action_keyword(action: &ModerationAction) -> &'static str {
         ModerationAction::Kick => "kick",
         ModerationAction::Ban => "ban",
         ModerationAction::Unban => "unban",
-    }
-}
-
-fn preview_text(value: &str) -> String {
-    const MAX_PREVIEW_CHARS: usize = 120;
-    let mut chars = value.chars();
-    let preview: String = chars.by_ref().take(MAX_PREVIEW_CHARS).collect();
-    if chars.next().is_some() {
-        format!("{preview}…")
-    } else {
-        preview
     }
 }
