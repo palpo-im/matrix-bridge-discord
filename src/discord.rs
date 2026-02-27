@@ -6,13 +6,17 @@ use tracing::{debug, error, info};
 
 use serenity::all::{
     Client as SerenityClient, Context as SerenityContext, EventHandler as SerenityEventHandler,
-    GatewayIntents, Message as SerenityMessage, OnlineStatus, Permissions, Presence, Ready,
+    GatewayIntents, Message as SerenityMessage, MessageUpdateEvent, OnlineStatus, Permissions,
+    Presence, Ready,
 };
 use tokio::sync::{RwLock, oneshot};
 
 use crate::bridge::presence_handler::{DiscordActivity, DiscordPresence, DiscordPresenceState};
 use crate::bridge::{BridgeCore, DiscordMessageContext};
 use crate::config::Config;
+
+const INITIAL_LOGIN_RETRY_SECONDS: u64 = 2;
+const MAX_LOGIN_RETRY_SECONDS: u64 = 300;
 
 pub mod command_handler;
 
@@ -150,6 +154,51 @@ impl SerenityEventHandler for ReadySignalHandler {
             activities,
         });
     }
+
+    async fn message_update(
+        &self,
+        _ctx: SerenityContext,
+        _old_if_available: Option<SerenityMessage>,
+        _new_if_available: Option<SerenityMessage>,
+        update: MessageUpdateEvent,
+    ) {
+        if update.author.as_ref().is_some_and(|author| author.bot) {
+            return;
+        }
+
+        let Some(content) = update.content.clone() else {
+            return;
+        };
+
+        let sender_id = update
+            .author
+            .as_ref()
+            .map(|author| author.id.to_string())
+            .unwrap_or_default();
+        if sender_id.is_empty() {
+            return;
+        }
+
+        let bridge = self.bridge.read().await.clone();
+        let Some(bridge) = bridge else {
+            return;
+        };
+
+        if let Err(err) = bridge
+            .handle_discord_message_with_context(DiscordMessageContext {
+                channel_id: update.channel_id.to_string(),
+                sender_id,
+                content,
+                attachments: Vec::new(),
+                reply_to: None,
+                edit_of: Some(update.id.to_string()),
+                permissions: std::collections::HashSet::new(),
+            })
+            .await
+        {
+            error!("failed to handle discord message update: {err}");
+        }
+    }
 }
 
 fn permissions_to_names(perms: Permissions) -> std::collections::HashSet<String> {
@@ -234,9 +283,24 @@ impl DiscordClient {
     }
 
     pub async fn start(&self) -> Result<()> {
-        self.login().await?;
-        info!("discord client is ready");
-        Ok(())
+        let mut retry_seconds = INITIAL_LOGIN_RETRY_SECONDS;
+
+        loop {
+            match self.login().await {
+                Ok(()) => {
+                    info!("discord client is ready");
+                    return Ok(());
+                }
+                Err(err) => {
+                    error!(
+                        "failed to start discord client: {err}. retrying in {} seconds",
+                        retry_seconds
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(retry_seconds)).await;
+                    retry_seconds = (retry_seconds * 2).min(MAX_LOGIN_RETRY_SECONDS);
+                }
+            }
+        }
     }
 
     pub async fn stop(&self) -> Result<()> {
