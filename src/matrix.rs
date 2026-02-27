@@ -116,6 +116,10 @@ fn build_matrix_message_content(body: &str, reply_to: Option<&str>, edit_of: Opt
     content
 }
 
+fn ghost_user_id(discord_user_id: &str, domain: &str) -> String {
+    format!("@_discord_{}:{}", discord_user_id, domain)
+}
+
 impl MatrixAppservice {
     pub async fn new(config: Arc<Config>) -> Result<Self> {
         info!(
@@ -322,8 +326,7 @@ impl MatrixAppservice {
         presence: &str,
         status_message: &str,
     ) -> Result<()> {
-        let localpart = format!("_discord_{}", discord_user_id);
-        let user_id = format!("@{}:{}", localpart, self.config.bridge.domain);
+        let user_id = ghost_user_id(discord_user_id, &self.config.bridge.domain);
 
         let ghost_client = self.appservice.client.clone();
         ghost_client
@@ -349,8 +352,7 @@ impl MatrixAppservice {
         typing: bool,
         timeout_ms: Option<u64>,
     ) -> Result<()> {
-        let localpart = format!("_discord_{}", discord_user_id);
-        let user_id = format!("@{}:{}", localpart, self.config.bridge.domain);
+        let user_id = ghost_user_id(discord_user_id, &self.config.bridge.domain);
 
         self.appservice
             .client
@@ -392,7 +394,7 @@ impl MatrixAppservice {
 
 #[cfg(test)]
 mod tests {
-    use super::build_matrix_message_content;
+    use super::{build_matrix_message_content, ghost_user_id};
 
     #[test]
     fn message_content_adds_reply_relation() {
@@ -411,5 +413,11 @@ mod tests {
         assert_eq!(content["m.new_content"]["body"], "new body");
         assert_eq!(content["m.relates_to"]["rel_type"], "m.replace");
         assert_eq!(content["m.relates_to"]["event_id"], "$old_event");
+    }
+
+    #[test]
+    fn ghost_user_id_uses_expected_namespace() {
+        let user_id = ghost_user_id("12345", "example.org");
+        assert_eq!(user_id, "@_discord_12345:example.org");
     }
 }

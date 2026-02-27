@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
@@ -237,7 +238,7 @@ impl SerenityEventHandler for ReadySignalHandler {
             return;
         };
 
-        for message_id in deleted_messages_ids {
+        for message_id in unique_message_ids(deleted_messages_ids) {
             if let Err(err) = bridge
                 .handle_discord_message_delete(&channel_id.to_string(), &message_id.to_string())
                 .await
@@ -280,6 +281,13 @@ fn permissions_to_names(perms: Permissions) -> std::collections::HashSet<String>
         names.insert("KICK_MEMBERS".to_string());
     }
     names
+}
+
+fn unique_message_ids(ids: Vec<MessageId>) -> Vec<MessageId> {
+    let mut seen = HashSet::new();
+    ids.into_iter()
+        .filter(|id| seen.insert(*id))
+        .collect()
 }
 
 impl DiscordClient {
@@ -443,8 +451,8 @@ impl DiscordClient {
 
 #[cfg(test)]
 mod tests {
-    use super::permissions_to_names;
-    use serenity::all::Permissions;
+    use super::{permissions_to_names, unique_message_ids};
+    use serenity::all::{MessageId, Permissions};
 
     #[test]
     fn permissions_to_names_maps_expected_flags() {
@@ -466,5 +474,20 @@ mod tests {
     fn permissions_to_names_ignores_unmapped_flags() {
         let names = permissions_to_names(Permissions::SEND_MESSAGES);
         assert!(names.is_empty());
+    }
+
+    #[test]
+    fn unique_message_ids_deduplicates_and_preserves_order() {
+        let ids = vec![
+            MessageId::new(42),
+            MessageId::new(99),
+            MessageId::new(42),
+            MessageId::new(7),
+            MessageId::new(99),
+        ];
+
+        let deduped = unique_message_ids(ids);
+
+        assert_eq!(deduped, vec![MessageId::new(42), MessageId::new(99), MessageId::new(7)]);
     }
 }
