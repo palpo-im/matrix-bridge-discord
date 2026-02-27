@@ -1636,21 +1636,104 @@ impl BridgeCore {
                     ModerationAction::Ban => "Banned",
                     ModerationAction::Unban => "Unbanned",
                 };
-                let reply = format!("{action_word} {matrix_user}");
+
+                let Some(mapping) = room_mapping else {
+                    self.discord_client
+                        .send_message(
+                            &ctx.channel_id,
+                            "This channel is not bridged to a plumbed matrix room",
+                        )
+                        .await?;
+                    return Ok(());
+                };
+
+                let guild_rooms = self
+                    .db_manager
+                    .room_store()
+                    .get_rooms_by_guild(&mapping.discord_guild_id)
+                    .await?;
+
+                let target_rooms: Vec<String> = if guild_rooms.is_empty() {
+                    vec![mapping.matrix_room_id.clone()]
+                } else {
+                    let mut seen = std::collections::HashSet::new();
+                    guild_rooms
+                        .into_iter()
+                        .filter_map(|room| {
+                            if seen.insert(room.matrix_room_id.clone()) {
+                                Some(room.matrix_room_id)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                };
+
+                let mut success_count = 0usize;
+                let mut failed_count = 0usize;
+
+                for room_id in &target_rooms {
+                    let reason = format!(
+                        "Discord moderation request by {} from channel {}",
+                        ctx.sender_id, ctx.channel_id
+                    );
+                    let result = match action {
+                        ModerationAction::Kick => self
+                            .matrix_client
+                            .kick_user_from_room(room_id, &matrix_user, Some(&reason))
+                            .await,
+                        ModerationAction::Ban => self
+                            .matrix_client
+                            .ban_user_from_room(room_id, &matrix_user, Some(&reason))
+                            .await,
+                        ModerationAction::Unban => {
+                            self.matrix_client.unban_user_from_room(room_id, &matrix_user).await
+                        }
+                    };
+
+                    match result {
+                        Ok(()) => {
+                            success_count += 1;
+                            let notice = format!(
+                                "Discord moderation request: {} {} (requested by {})",
+                                action_keyword(&action),
+                                matrix_user,
+                                ctx.sender_id
+                            );
+                            if let Err(err) =
+                                self.matrix_client.send_notice(room_id, &notice).await
+                            {
+                                warn!(
+                                    "failed to send moderation notice to room {}: {}",
+                                    room_id, err
+                                );
+                            }
+                        }
+                        Err(err) => {
+                            failed_count += 1;
+                            warn!(
+                                "failed to apply moderation action={} user={} room={}: {}",
+                                action_keyword(&action),
+                                matrix_user,
+                                room_id,
+                                err
+                            );
+                        }
+                    }
+                }
+
+                let reply = if failed_count == 0 {
+                    format!(
+                        "{action_word} {matrix_user} in {success_count} bridged room(s)."
+                    )
+                } else {
+                    format!(
+                        "{action_word} {matrix_user} in {success_count} room(s), failed in {failed_count} room(s)."
+                    )
+                };
                 self.discord_client
                     .send_message(&ctx.channel_id, &reply)
                     .await?;
-                if let Some(mapping) = room_mapping {
-                    let notice = format!(
-                        "Discord moderation request: {} {} (requested by {})",
-                        action_keyword(&action),
-                        matrix_user,
-                        ctx.sender_id
-                    );
-                    self.matrix_client
-                        .send_notice(&mapping.matrix_room_id, &notice)
-                        .await?;
-                }
             }
             DiscordCommandOutcome::UnbridgeRequested => {
                 if let Some(mapping) = room_mapping {
