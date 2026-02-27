@@ -1,4 +1,5 @@
 use crate::db::{MessageMapping, RoomMapping};
+use crate::discord::ModerationAction;
 
 use super::message_flow::OutboundMatrixMessage;
 
@@ -77,15 +78,24 @@ pub(crate) fn should_forward_discord_typing(
     !disable_typing_notifications && room_mapping.is_some()
 }
 
+pub(crate) fn action_keyword(action: &ModerationAction) -> &'static str {
+    match action {
+        ModerationAction::Kick => "kick",
+        ModerationAction::Ban => "ban",
+        ModerationAction::Unban => "unban",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
 
     use super::{
-        apply_message_relation_mappings, build_discord_delete_redaction_request,
+        action_keyword, apply_message_relation_mappings, build_discord_delete_redaction_request,
         build_discord_typing_request, discord_delete_redaction_request,
         preview_text, should_forward_discord_typing, OutboundMatrixMessage,
     };
+    use crate::discord::ModerationAction;
     use crate::db::{MessageMapping, RoomMapping};
 
     fn mapping(discord_message_id: &str, matrix_event_id: &str) -> MessageMapping {
@@ -221,5 +231,12 @@ mod tests {
         let preview = preview_text(&text);
         assert_eq!(preview.chars().count(), 121);
         assert!(preview.ends_with('…'));
+    }
+
+    #[test]
+    fn action_keyword_maps_all_moderation_actions() {
+        assert_eq!(action_keyword(&ModerationAction::Kick), "kick");
+        assert_eq!(action_keyword(&ModerationAction::Ban), "ban");
+        assert_eq!(action_keyword(&ModerationAction::Unban), "unban");
     }
 }

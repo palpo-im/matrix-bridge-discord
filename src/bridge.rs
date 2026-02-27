@@ -18,7 +18,7 @@ pub mod presence_handler;
 pub mod provisioning;
 
 use self::logic::{
-    apply_message_relation_mappings, build_discord_typing_request,
+    action_keyword, apply_message_relation_mappings, build_discord_typing_request,
     discord_delete_redaction_request, preview_text, should_forward_discord_typing,
 };
 use self::message_flow::{
@@ -924,13 +924,5 @@ impl MatrixPresenceTarget for MatrixAppservice {
     ) -> Result<()> {
         self.ensure_ghost_user_registered(discord_user_id, username)
             .await
-    }
-}
-
-fn action_keyword(action: &ModerationAction) -> &'static str {
-    match action {
-        ModerationAction::Kick => "kick",
-        ModerationAction::Ban => "ban",
-        ModerationAction::Unban => "unban",
     }
 }
