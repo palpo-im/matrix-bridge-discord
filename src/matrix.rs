@@ -182,6 +182,58 @@ impl MatrixAppservice {
         is_namespaced_user(user_id)
     }
 
+    async fn ensure_bot_joined_room(&self, room_id: &str) -> Result<bool> {
+        let bot_user_id = self.bot_user_id();
+        let membership = self
+            .appservice
+            .client
+            .get_room_state_event(room_id, "m.room.member", &bot_user_id)
+            .await
+            .ok()
+            .and_then(|state| {
+                state
+                    .get("membership")
+                    .and_then(|value| value.as_str())
+                    .map(ToOwned::to_owned)
+            });
+
+        match membership.as_deref() {
+            Some("join") => Ok(false),
+            Some("invite") => {
+                let joined = self
+                    .appservice
+                    .client
+                    .join_room(room_id)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "failed to auto-join invited room {} as {}",
+                            room_id, bot_user_id
+                        )
+                    })?;
+                info!(
+                    "auto-joined invited room {} while sending notice as {}",
+                    joined, bot_user_id
+                );
+                Ok(true)
+            }
+            Some(other) => {
+                debug!(
+                    "bot room membership does not permit auto-join room_id={} bot_user={} membership={}",
+                    room_id, bot_user_id, other
+                );
+                Ok(false)
+            }
+            None => {
+                debug!(
+                    "no membership state found for bot in room room_id={} bot_user={}",
+                    room_id, bot_user_id
+                );
+                Ok(false)
+            }
+        }
+    }
+
     pub async fn set_processor(&self, processor: Arc<MatrixEventProcessor>) {
         self.handler.write().await.processor = Some(processor);
     }
@@ -248,8 +300,30 @@ impl MatrixAppservice {
     }
 
     pub async fn send_notice(&self, room_id: &str, content: &str) -> Result<()> {
-        self.appservice.client.send_notice(room_id, content).await?;
-        Ok(())
+        match self.appservice.client.send_notice(room_id, content).await {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                let err_text = err.to_string();
+                if err_text.contains("missing event_id in send response")
+                    && self.ensure_bot_joined_room(room_id).await?
+                {
+                    self.appservice
+                        .client
+                        .send_notice(room_id, content)
+                        .await
+                        .with_context(|| {
+                            format!("failed to send notice after auto-join room_id={}", room_id)
+                        })?;
+                    return Ok(());
+                }
+
+                Err(err).context(format!(
+                    "failed to send notice room_id={} bot_user={}",
+                    room_id,
+                    self.bot_user_id()
+                ))
+            }
+        }
     }
 
     pub async fn send_message_with_metadata(
