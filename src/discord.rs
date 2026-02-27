@@ -61,6 +61,7 @@ pub struct DiscordClient {
     bridge: Arc<RwLock<Option<Arc<BridgeCore>>>>,
     http: Arc<RwLock<Option<Arc<Http>>>>,
     webhook_cache: Arc<RwLock<std::collections::HashMap<String, WebhookInfo>>>,
+    our_webhook_ids: Arc<RwLock<std::collections::HashSet<u64>>>,
 }
 
 struct DiscordLoginState {
@@ -87,6 +88,7 @@ struct ReadySignalHandler {
     ready_sender: Arc<tokio::sync::Mutex<Option<oneshot::Sender<()>>>>,
     bridge: Arc<RwLock<Option<Arc<BridgeCore>>>>,
     http_sender: Arc<tokio::sync::Mutex<Option<oneshot::Sender<Arc<Http>>>>>,
+    our_webhook_ids: Arc<RwLock<std::collections::HashSet<u64>>>,
 }
 
 #[serenity::async_trait]
@@ -107,6 +109,17 @@ impl SerenityEventHandler for ReadySignalHandler {
     async fn message(&self, _ctx: SerenityContext, msg: SerenityMessage) {
         if msg.author.bot {
             return;
+        }
+
+        if let Some(webhook_id) = msg.webhook_id {
+            let our_ids = self.our_webhook_ids.read().await;
+            if our_ids.contains(&webhook_id.get()) {
+                debug!(
+                    "ignoring discord message from our own webhook webhook_id={} message_id={}",
+                    webhook_id, msg.id
+                );
+                return;
+            }
         }
 
         let bridge = self.bridge.read().await.clone();
@@ -426,6 +439,7 @@ impl DiscordClient {
             bridge: Arc::new(RwLock::new(None)),
             http: Arc::new(RwLock::new(None)),
             webhook_cache: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            our_webhook_ids: Arc::new(RwLock::new(std::collections::HashSet::new())),
         })
     }
 
@@ -451,6 +465,7 @@ impl DiscordClient {
             ready_sender: Arc::new(tokio::sync::Mutex::new(Some(ready_tx))),
             bridge: self.bridge.clone(),
             http_sender: Arc::new(tokio::sync::Mutex::new(Some(http_tx))),
+            our_webhook_ids: self.our_webhook_ids.clone(),
         };
 
         let mut gateway_client = SerenityClient::builder(&self._config.auth.bot_token, intents)
@@ -665,6 +680,9 @@ impl DiscordClient {
             }
         };
 
+        self.our_webhook_ids.write().await.insert(info.id);
+        debug!("recorded our webhook id={} for channel={}", info.id, channel_id);
+        
         self.webhook_cache.write().await.insert(channel_id.to_string(), info.clone());
         Ok(info)
     }
