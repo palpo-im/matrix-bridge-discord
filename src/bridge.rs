@@ -186,6 +186,16 @@ impl BridgeCore {
         Ok(mapping)
     }
 
+    fn discord_user_id_from_mxid(&self, mxid: &str) -> Option<String> {
+        let localpart = mxid.strip_prefix("@_discord_")?;
+        let suffix = format!(":{}", self.matrix_client.config().bridge.domain);
+        let discord_user_id = localpart.strip_suffix(&suffix)?;
+        if discord_user_id.is_empty() || discord_user_id.contains(':') {
+            return None;
+        }
+        Some(discord_user_id.to_string())
+    }
+
     pub async fn handle_matrix_message(&self, event: &MatrixEvent) -> Result<()> {
         if self.matrix_client.is_namespaced_user(&event.sender) {
             debug!(
@@ -647,52 +657,103 @@ impl BridgeCore {
                     }
                 }
 
-                if membership == "leave"
+                if (membership == "leave" || membership == "ban")
                     && let Some(state_key) = &event.state_key
                     && event.sender != *state_key
                 {
-                    let kick_for = self.matrix_client.config().room.kick_for;
-                    if kick_for > 0 {
-                        let room_mapping = self.get_room_mapping_cached(&event.room_id).await?;
-                        let Some(mapping) = room_mapping else {
-                            return Ok(());
-                        };
+                    let room_mapping = self.get_room_mapping_cached(&event.room_id).await?;
+                    let Some(mapping) = room_mapping else {
+                        debug!(
+                            "matrix moderation ignored room_id={} reason=no_discord_mapping",
+                            event.room_id
+                        );
+                        return Ok(());
+                    };
 
-                        let domain_suffix =
-                            format!(":{}", self.matrix_client.config().bridge.domain);
-                        let Some(localpart) = state_key.strip_prefix("@_discord_") else {
-                            return Ok(());
-                        };
-                        let Some(discord_user_id) = localpart.strip_suffix(&domain_suffix) else {
-                            return Ok(());
-                        };
+                    let Some(discord_user_id) = self.discord_user_id_from_mxid(state_key) else {
+                        debug!(
+                            "matrix moderation ignored room_id={} state_key={} reason=not_discord_ghost",
+                            event.room_id, state_key
+                        );
+                        return Ok(());
+                    };
 
-                        let target_user = state_key.clone();
-                        let room_id = event.room_id.clone();
-                        let channel_id = mapping.discord_channel_id.clone();
-                        let discord_user_id = discord_user_id.to_string();
-                        let discord_client = self.discord_client.clone();
+                    let reason = content
+                        .get("reason")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("No reason provided");
 
-                        tokio::spawn(async move {
-                            tokio::time::sleep(tokio::time::Duration::from_millis(kick_for)).await;
-                            match discord_client
-                                .clear_channel_member_overwrite(&channel_id, &discord_user_id)
-                                .await
-                            {
-                                Ok(()) => {
-                                    info!(
-                                        "restored discord channel permissions for user={} matrix_user={} room={} channel={} after {}ms",
-                                        discord_user_id, target_user, room_id, channel_id, kick_for
-                                    );
+                    if let Err(err) = self
+                        .discord_client
+                        .deny_channel_member_permissions(&mapping.discord_channel_id, &discord_user_id)
+                        .await
+                    {
+                        warn!(
+                            "failed to apply discord deny overwrite for user={} channel={} room={} membership={}: {}",
+                            discord_user_id,
+                            mapping.discord_channel_id,
+                            event.room_id,
+                            membership,
+                            err
+                        );
+                    }
+
+                    let action_word = if membership == "ban" { "banned" } else { "kicked" };
+                    let notice = format!(
+                        "Matrix moderation: `{}` was {} by `{}`. Reason: {}",
+                        state_key, action_word, event.sender, reason
+                    );
+                    if let Err(err) = self
+                        .discord_client
+                        .send_message(&mapping.discord_channel_id, &notice)
+                        .await
+                    {
+                        warn!(
+                            "failed to post matrix moderation notice to channel {}: {}",
+                            mapping.discord_channel_id, err
+                        );
+                    }
+
+                    if membership == "leave" {
+                        let kick_for = self.matrix_client.config().room.kick_for;
+                        if kick_for > 0 {
+                            let target_user = state_key.clone();
+                            let room_id = event.room_id.clone();
+                            let channel_id = mapping.discord_channel_id.clone();
+                            let discord_client = self.discord_client.clone();
+                            let restore_user_id = discord_user_id.clone();
+
+                            tokio::spawn(async move {
+                                tokio::time::sleep(tokio::time::Duration::from_millis(kick_for))
+                                    .await;
+                                match discord_client
+                                    .clear_channel_member_overwrite(&channel_id, &restore_user_id)
+                                    .await
+                                {
+                                    Ok(()) => {
+                                        info!(
+                                            "restored discord channel permissions for user={} matrix_user={} room={} channel={} after {}ms",
+                                            restore_user_id,
+                                            target_user,
+                                            room_id,
+                                            channel_id,
+                                            kick_for
+                                        );
+                                    }
+                                    Err(err) => {
+                                        warn!(
+                                            "failed to restore discord channel permissions for user={} matrix_user={} room={} channel={} after {}ms: {}",
+                                            restore_user_id,
+                                            target_user,
+                                            room_id,
+                                            channel_id,
+                                            kick_for,
+                                            err
+                                        );
+                                    }
                                 }
-                                Err(err) => {
-                                    warn!(
-                                        "failed to restore discord channel permissions for user={} matrix_user={} room={} channel={} after {}ms: {}",
-                                        discord_user_id, target_user, room_id, channel_id, kick_for, err
-                                    );
-                                }
-                            }
-                        });
+                            });
+                        }
                     }
                 }
             }
