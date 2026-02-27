@@ -331,3 +331,87 @@ impl DatabaseManager {
         self.db_type
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use chrono::Utc;
+    use tempfile::NamedTempFile;
+
+    use super::DatabaseManager;
+    use crate::config::DatabaseConfig;
+    use crate::db::MessageMapping;
+
+    #[tokio::test]
+    async fn sqlite_message_mapping_roundtrip() {
+        let file = NamedTempFile::new().expect("temp sqlite file");
+        let db_path = file.path().to_string_lossy().to_string();
+
+        let config = DatabaseConfig {
+            url: None,
+            conn_string: None,
+            filename: Some(db_path),
+            user_store_path: None,
+            room_store_path: None,
+            max_connections: Some(1),
+            min_connections: Some(1),
+        };
+
+        let manager = DatabaseManager::new(&config).await.expect("db manager");
+        manager.migrate().await.expect("migrate");
+
+        let now = Utc::now();
+        let mapping = MessageMapping {
+            id: 0,
+            discord_message_id: "discord-msg-1".to_string(),
+            matrix_room_id: "!room:example.org".to_string(),
+            matrix_event_id: "$event1".to_string(),
+            created_at: now,
+            updated_at: now,
+        };
+
+        manager
+            .message_store()
+            .upsert_message_mapping(&mapping)
+            .await
+            .expect("insert mapping");
+
+        let inserted = manager
+            .message_store()
+            .get_by_discord_message_id("discord-msg-1")
+            .await
+            .expect("query mapping")
+            .expect("mapping exists");
+        assert_eq!(inserted.matrix_event_id, "$event1");
+
+        let mut updated = mapping.clone();
+        updated.matrix_event_id = "$event2".to_string();
+        updated.updated_at = Utc::now();
+
+        manager
+            .message_store()
+            .upsert_message_mapping(&updated)
+            .await
+            .expect("update mapping");
+
+        let after_update = manager
+            .message_store()
+            .get_by_discord_message_id("discord-msg-1")
+            .await
+            .expect("query mapping after update")
+            .expect("mapping exists after update");
+        assert_eq!(after_update.matrix_event_id, "$event2");
+
+        manager
+            .message_store()
+            .delete_by_discord_message_id("discord-msg-1")
+            .await
+            .expect("delete mapping");
+
+        let after_delete = manager
+            .message_store()
+            .get_by_discord_message_id("discord-msg-1")
+            .await
+            .expect("query mapping after delete");
+        assert!(after_delete.is_none());
+    }
+}
