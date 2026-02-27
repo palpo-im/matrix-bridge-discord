@@ -373,6 +373,7 @@ impl Config {
         let content = std::fs::read_to_string(&path)?;
         let mut config: Config = serde_yaml::from_str(&content)?;
         config.apply_env_overrides();
+        config.normalize();
         config.load_registration(path.as_ref())?;
         config.validate()?;
         Ok(config)
@@ -411,6 +412,12 @@ impl Config {
                 "auth.bot_token cannot be empty".to_string(),
             ));
         }
+        if looks_like_placeholder_bot_token(&self.auth.bot_token) {
+            return Err(ConfigError::InvalidConfig(
+                "auth.bot_token is still using a placeholder value; set a real Discord bot token"
+                    .to_string(),
+            ));
+        }
 
         if self.database.connection_string().is_empty() {
             return Err(ConfigError::InvalidConfig(
@@ -427,9 +434,13 @@ impl Config {
         Ok(())
     }
 
+    fn normalize(&mut self) {
+        self.auth.bot_token = sanitize_bot_token(&self.auth.bot_token);
+    }
+
     fn apply_env_overrides(&mut self) {
         if let Ok(value) = std::env::var("APPSERVICE_DISCORD_AUTH_BOT_TOKEN") {
-            self.auth.bot_token = value;
+            self.auth.bot_token = sanitize_bot_token(&value);
         }
         if let Ok(value) = std::env::var("APPSERVICE_DISCORD_AUTH_CLIENT_ID") {
             self.auth.client_id = Some(value);
@@ -649,4 +660,40 @@ fn default_webhook_name() -> String {
 
 fn default_webhook_avatar() -> String {
     "https://matrix.org/_matrix/media/r0/download/matrix.org/mlxoESwIsTbJrfXyAAogrNxA".to_string()
+}
+
+fn sanitize_bot_token(token: &str) -> String {
+    let trimmed = token.trim();
+    let without_prefix = trimmed
+        .strip_prefix("Bot ")
+        .or_else(|| trimmed.strip_prefix("bot "))
+        .unwrap_or(trimmed);
+    without_prefix.trim().to_string()
+}
+
+fn looks_like_placeholder_bot_token(token: &str) -> bool {
+    let lower = token.trim().to_ascii_lowercase();
+    lower == "your_discord_bot_token"
+        || lower == "your_bot_token_here"
+        || lower == "your_bot_token"
+        || lower == "your-token-here"
+        || lower == "changeme"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{looks_like_placeholder_bot_token, sanitize_bot_token};
+
+    #[test]
+    fn sanitize_bot_token_removes_prefix_and_whitespace() {
+        let sanitized = sanitize_bot_token("  Bot abc123  ");
+        assert_eq!(sanitized, "abc123");
+    }
+
+    #[test]
+    fn placeholder_detection_matches_common_values() {
+        assert!(looks_like_placeholder_bot_token("YOUR_DISCORD_BOT_TOKEN"));
+        assert!(looks_like_placeholder_bot_token("your_bot_token_here"));
+        assert!(!looks_like_placeholder_bot_token("mfa.x.y"));
+    }
 }
