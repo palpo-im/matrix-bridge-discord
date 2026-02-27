@@ -6,8 +6,8 @@ use tracing::{debug, error, info};
 
 use serenity::all::{
     Client as SerenityClient, Context as SerenityContext, EventHandler as SerenityEventHandler,
-    GatewayIntents, Message as SerenityMessage, MessageUpdateEvent, OnlineStatus, Permissions,
-    Presence, Ready,
+    ChannelId, GatewayIntents, GuildId, Message as SerenityMessage, MessageId,
+    MessageUpdateEvent, OnlineStatus, Permissions, Presence, Ready,
 };
 use tokio::sync::{RwLock, oneshot};
 
@@ -106,6 +106,7 @@ impl SerenityEventHandler for ReadySignalHandler {
         if let Err(err) = bridge
             .handle_discord_message_with_context(DiscordMessageContext {
                 channel_id: msg.channel_id.to_string(),
+                source_message_id: Some(msg.id.to_string()),
                 sender_id: msg.author.id.to_string(),
                 content: msg.content.clone(),
                 attachments,
@@ -187,6 +188,7 @@ impl SerenityEventHandler for ReadySignalHandler {
         if let Err(err) = bridge
             .handle_discord_message_with_context(DiscordMessageContext {
                 channel_id: update.channel_id.to_string(),
+                source_message_id: Some(update.id.to_string()),
                 sender_id,
                 content,
                 attachments: Vec::new(),
@@ -197,6 +199,29 @@ impl SerenityEventHandler for ReadySignalHandler {
             .await
         {
             error!("failed to handle discord message update: {err}");
+        }
+    }
+
+    async fn message_delete(
+        &self,
+        _ctx: SerenityContext,
+        channel_id: ChannelId,
+        deleted_message_id: MessageId,
+        _guild_id: Option<GuildId>,
+    ) {
+        let bridge = self.bridge.read().await.clone();
+        let Some(bridge) = bridge else {
+            return;
+        };
+
+        if let Err(err) = bridge
+            .handle_discord_message_delete(
+                &channel_id.to_string(),
+                &deleted_message_id.to_string(),
+            )
+            .await
+        {
+            error!("failed to handle discord message delete: {err}");
         }
     }
 }

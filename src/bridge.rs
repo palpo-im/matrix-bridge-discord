@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::{collections::HashSet, time::Duration};
+use std::{collections::HashMap, collections::HashSet, time::Duration};
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -27,12 +27,19 @@ use self::provisioning::{ApprovalResponseStatus, ProvisioningCoordinator, Provis
 #[derive(Debug, Clone)]
 pub struct DiscordMessageContext {
     pub channel_id: String,
+    pub source_message_id: Option<String>,
     pub sender_id: String,
     pub content: String,
     pub attachments: Vec<String>,
     pub reply_to: Option<String>,
     pub edit_of: Option<String>,
     pub permissions: HashSet<String>,
+}
+
+#[derive(Debug, Clone)]
+struct MatrixMessageLink {
+    matrix_room_id: String,
+    matrix_event_id: String,
 }
 
 #[derive(Clone)]
@@ -45,6 +52,7 @@ pub struct BridgeCore {
     discord_command_handler: Arc<DiscordCommandHandler>,
     presence_handler: Arc<PresenceHandler>,
     provisioning: Arc<ProvisioningCoordinator>,
+    message_links: Arc<tokio::sync::Mutex<HashMap<String, MatrixMessageLink>>>,
 }
 
 impl BridgeCore {
@@ -66,6 +74,7 @@ impl BridgeCore {
             discord_command_handler: Arc::new(DiscordCommandHandler::new()),
             presence_handler: Arc::new(PresenceHandler::new(None)),
             provisioning: Arc::new(ProvisioningCoordinator::default()),
+            message_links: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             matrix_client,
             discord_client,
             db_manager,
@@ -127,6 +136,7 @@ impl BridgeCore {
             },
         )
         .await
+        .map(|_| ())
     }
 
     pub async fn handle_matrix_message(&self, event: &MatrixEvent) -> Result<()> {
@@ -542,7 +552,7 @@ impl BridgeCore {
         matrix_room_id: &str,
         discord_sender: &str,
         outbound: OutboundMatrixMessage,
-    ) -> Result<()> {
+    ) -> Result<String> {
         let body = outbound.render_body();
         debug!(
             "sending matrix message room_id={} sender={} reply_to={:?} edit_of={:?} attachments={} body_len={} body_preview={}",
@@ -554,7 +564,8 @@ impl BridgeCore {
             body.len(),
             preview_text(&body)
         );
-        self.matrix_client
+        let event_id = self
+            .matrix_client
             .send_message_with_metadata(
                 matrix_room_id,
                 discord_sender,
@@ -570,7 +581,7 @@ impl BridgeCore {
             discord_sender,
             body.len()
         );
-        Ok(())
+        Ok(event_id)
     }
 
     pub async fn handle_discord_message_with_context(
@@ -644,7 +655,7 @@ impl BridgeCore {
                 .await?;
         }
 
-        let outbound = self.message_flow.discord_to_matrix(&DiscordInboundMessage {
+        let mut outbound = self.message_flow.discord_to_matrix(&DiscordInboundMessage {
             channel_id: ctx.channel_id,
             sender_id: ctx.sender_id.clone(),
             content: ctx.content,
@@ -652,6 +663,18 @@ impl BridgeCore {
             reply_to: ctx.reply_to,
             edit_of: ctx.edit_of,
         });
+
+        if let Some(reply_discord_message_id) = outbound.reply_to.clone()
+            && let Some(link) = self.lookup_link(&reply_discord_message_id).await
+        {
+            outbound.reply_to = Some(link.matrix_event_id);
+        }
+
+        if let Some(edit_discord_message_id) = outbound.edit_of.clone()
+            && let Some(link) = self.lookup_link(&edit_discord_message_id).await
+        {
+            outbound.edit_of = Some(link.matrix_event_id);
+        }
         debug!(
             "discord->matrix outbound prepared channel_id={} matrix_room={} sender={} reply_to={:?} edit_of={:?} attachments={} body_len={} body_preview={}",
             mapping.discord_channel_id,
@@ -663,7 +686,38 @@ impl BridgeCore {
             outbound.body.len(),
             preview_text(&outbound.body)
         );
-        self.send_to_matrix_message(&mapping.matrix_room_id, &ctx.sender_id, outbound)
+        let matrix_event_id = self
+            .send_to_matrix_message(&mapping.matrix_room_id, &ctx.sender_id, outbound)
+            .await?;
+
+        if let Some(source_message_id) = ctx.source_message_id {
+            self.remember_link(
+                source_message_id,
+                MatrixMessageLink {
+                    matrix_room_id: mapping.matrix_room_id.clone(),
+                    matrix_event_id,
+                },
+            )
+            .await;
+        }
+        Ok(())
+    }
+
+    pub async fn handle_discord_message_delete(
+        &self,
+        _discord_channel_id: &str,
+        discord_message_id: &str,
+    ) -> Result<()> {
+        let Some(link) = self.take_link(discord_message_id).await else {
+            return Ok(());
+        };
+
+        self.matrix_client
+            .redact_message(
+                &link.matrix_room_id,
+                &link.matrix_event_id,
+                Some("Deleted on Discord"),
+            )
             .await?;
         Ok(())
     }
@@ -762,6 +816,7 @@ impl BridgeCore {
     ) -> Result<()> {
         self.handle_discord_message_with_context(DiscordMessageContext {
             channel_id: discord_channel_id.to_string(),
+            source_message_id: None,
             sender_id: discord_sender.to_string(),
             content: content.to_string(),
             attachments: Vec::new(),
@@ -778,6 +833,22 @@ impl BridgeCore {
 
     pub fn db(&self) -> Arc<DatabaseManager> {
         self.db_manager.clone()
+    }
+
+    async fn remember_link(&self, discord_message_id: String, link: MatrixMessageLink) {
+        self.message_links.lock().await.insert(discord_message_id, link);
+    }
+
+    async fn lookup_link(&self, discord_message_id: &str) -> Option<MatrixMessageLink> {
+        self.message_links
+            .lock()
+            .await
+            .get(discord_message_id)
+            .cloned()
+    }
+
+    async fn take_link(&self, discord_message_id: &str) -> Option<MatrixMessageLink> {
+        self.message_links.lock().await.remove(discord_message_id)
     }
 }
 

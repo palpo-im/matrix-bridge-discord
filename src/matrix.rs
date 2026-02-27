@@ -194,6 +194,7 @@ impl MatrixAppservice {
     pub async fn send_message(&self, room_id: &str, sender: &str, content: &str) -> Result<()> {
         self.send_message_with_metadata(room_id, sender, content, &[], None, None)
             .await
+            .map(|_| ())
     }
 
     pub async fn send_notice(&self, room_id: &str, content: &str) -> Result<()> {
@@ -208,8 +209,8 @@ impl MatrixAppservice {
         body: &str,
         _attachments: &[String], // TODO: Implement attachment uploading
         reply_to: Option<&str>,
-        _edit_of: Option<&str>,
-    ) -> Result<()> {
+        edit_of: Option<&str>,
+    ) -> Result<String> {
         let ghost_client = self.appservice.client.clone();
         ghost_client
             .impersonate_user_id(Some(sender), None::<&str>)
@@ -228,10 +229,39 @@ impl MatrixAppservice {
             });
         }
 
-        ghost_client
+        if let Some(edit_event_id) = edit_of {
+            content["m.new_content"] = json!({
+                "msgtype": "m.text",
+                "body": body,
+            });
+            content["m.relates_to"] = json!({
+                "rel_type": "m.replace",
+                "event_id": edit_event_id,
+            });
+            content["body"] = format!("* {body}").into();
+        }
+
+        let event_id = ghost_client
             .send_event(room_id, "m.room.message", &content)
             .await?;
 
+        Ok(event_id)
+    }
+
+    pub async fn redact_message(
+        &self,
+        room_id: &str,
+        event_id: &str,
+        reason: Option<&str>,
+    ) -> Result<()> {
+        let content = json!({
+            "redacts": event_id,
+            "reason": reason.unwrap_or(""),
+        });
+        self.appservice
+            .client
+            .send_event(room_id, "m.room.redaction", &content)
+            .await?;
         Ok(())
     }
 
