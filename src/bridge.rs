@@ -656,25 +656,29 @@ impl BridgeCore {
             edit_of: ctx.edit_of,
         });
 
-        if let Some(reply_discord_message_id) = outbound.reply_to.clone()
-            && let Some(link) = self
-                .db_manager
+        let reply_mapping = if let Some(reply_discord_message_id) = outbound.reply_to.clone() {
+            self.db_manager
                 .message_store()
                 .get_by_discord_message_id(&reply_discord_message_id)
                 .await?
-        {
-            outbound.reply_to = Some(link.matrix_event_id);
-        }
+        } else {
+            None
+        };
 
-        if let Some(edit_discord_message_id) = outbound.edit_of.clone()
-            && let Some(link) = self
-                .db_manager
+        let edit_mapping = if let Some(edit_discord_message_id) = outbound.edit_of.clone() {
+            self.db_manager
                 .message_store()
                 .get_by_discord_message_id(&edit_discord_message_id)
                 .await?
-        {
-            outbound.edit_of = Some(link.matrix_event_id);
-        }
+        } else {
+            None
+        };
+
+        apply_message_relation_mappings(
+            &mut outbound,
+            reply_mapping.as_ref(),
+            edit_mapping.as_ref(),
+        );
         debug!(
             "discord->matrix outbound prepared channel_id={} matrix_room={} sender={} reply_to={:?} edit_of={:?} attachments={} body_len={} body_preview={}",
             mapping.discord_channel_id,
@@ -927,5 +931,71 @@ fn preview_text(value: &str) -> String {
         format!("{preview}…")
     } else {
         preview
+    }
+}
+
+fn apply_message_relation_mappings(
+    outbound: &mut OutboundMatrixMessage,
+    reply_mapping: Option<&MessageMapping>,
+    edit_mapping: Option<&MessageMapping>,
+) {
+    if let Some(link) = reply_mapping {
+        outbound.reply_to = Some(link.matrix_event_id.clone());
+    }
+
+    if let Some(link) = edit_mapping {
+        outbound.edit_of = Some(link.matrix_event_id.clone());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::Utc;
+
+    use super::{apply_message_relation_mappings, OutboundMatrixMessage};
+    use crate::db::MessageMapping;
+
+    fn mapping(discord_message_id: &str, matrix_event_id: &str) -> MessageMapping {
+        MessageMapping {
+            id: 0,
+            discord_message_id: discord_message_id.to_string(),
+            matrix_room_id: "!room:example.org".to_string(),
+            matrix_event_id: matrix_event_id.to_string(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn apply_message_relation_mappings_replaces_ids_when_links_exist() {
+        let mut outbound = OutboundMatrixMessage {
+            body: "hello".to_string(),
+            reply_to: Some("discord-reply-id".to_string()),
+            edit_of: Some("discord-edit-id".to_string()),
+            attachments: Vec::new(),
+        };
+
+        let reply = mapping("discord-reply-id", "$matrix-reply");
+        let edit = mapping("discord-edit-id", "$matrix-edit");
+
+        apply_message_relation_mappings(&mut outbound, Some(&reply), Some(&edit));
+
+        assert_eq!(outbound.reply_to, Some("$matrix-reply".to_string()));
+        assert_eq!(outbound.edit_of, Some("$matrix-edit".to_string()));
+    }
+
+    #[test]
+    fn apply_message_relation_mappings_keeps_original_when_links_missing() {
+        let mut outbound = OutboundMatrixMessage {
+            body: "hello".to_string(),
+            reply_to: Some("discord-reply-id".to_string()),
+            edit_of: Some("discord-edit-id".to_string()),
+            attachments: Vec::new(),
+        };
+
+        apply_message_relation_mappings(&mut outbound, None, None);
+
+        assert_eq!(outbound.reply_to, Some("discord-reply-id".to_string()));
+        assert_eq!(outbound.edit_of, Some("discord-edit-id".to_string()));
     }
 }
