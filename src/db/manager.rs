@@ -401,13 +401,24 @@ mod tests {
             .expect("mapping exists after update");
         assert_eq!(after_update.matrix_event_id, "$event2");
 
-        manager
+        let manager_reopened = DatabaseManager::new(&config).await.expect("db manager reopened");
+        manager_reopened.migrate().await.expect("migrate reopened");
+
+        let persisted = manager_reopened
+            .message_store()
+            .get_by_discord_message_id("discord-msg-1")
+            .await
+            .expect("query after reopen")
+            .expect("mapping exists after reopen");
+        assert_eq!(persisted.matrix_event_id, "$event2");
+
+        manager_reopened
             .message_store()
             .delete_by_discord_message_id("discord-msg-1")
             .await
-            .expect("delete mapping");
+            .expect("delete mapping after reopen");
 
-        let after_delete = manager
+        let after_delete = manager_reopened
             .message_store()
             .get_by_discord_message_id("discord-msg-1")
             .await

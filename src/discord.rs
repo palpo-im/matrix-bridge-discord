@@ -440,3 +440,31 @@ impl DiscordClient {
         }))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::permissions_to_names;
+    use serenity::all::Permissions;
+
+    #[test]
+    fn permissions_to_names_maps_expected_flags() {
+        let perms = Permissions::MANAGE_WEBHOOKS
+            | Permissions::MANAGE_CHANNELS
+            | Permissions::BAN_MEMBERS
+            | Permissions::KICK_MEMBERS;
+
+        let names = permissions_to_names(perms);
+
+        assert!(names.contains("MANAGE_WEBHOOKS"));
+        assert!(names.contains("MANAGE_CHANNELS"));
+        assert!(names.contains("BAN_MEMBERS"));
+        assert!(names.contains("KICK_MEMBERS"));
+        assert_eq!(names.len(), 4);
+    }
+
+    #[test]
+    fn permissions_to_names_ignores_unmapped_flags() {
+        let names = permissions_to_names(Permissions::SEND_MESSAGES);
+        assert!(names.is_empty());
+    }
+}
