@@ -2,15 +2,17 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
+use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use serenity::all::{
     Client as SerenityClient, Context as SerenityContext, EventHandler as SerenityEventHandler,
-    ChannelId, GatewayIntents, GuildId, Message as SerenityMessage, MessageId,
+    ChannelId, GatewayIntents, GuildId, Http, Message as SerenityMessage, MessageId,
     MessageUpdateEvent, OnlineStatus, Permissions, Presence, Ready, TypingStartEvent,
+    Webhook, WebhookType,
 };
-use tokio::sync::{RwLock, oneshot};
+use tokio::sync::{RwLock, oneshot, Mutex as AsyncMutex};
 
 use crate::bridge::presence_handler::{DiscordActivity, DiscordPresence, DiscordPresenceState};
 use crate::bridge::{BridgeCore, DiscordMessageContext};
@@ -57,28 +59,48 @@ pub struct DiscordClient {
     send_lock: Arc<tokio::sync::Mutex<()>>,
     login_state: Arc<tokio::sync::Mutex<DiscordLoginState>>,
     bridge: Arc<RwLock<Option<Arc<BridgeCore>>>>,
+    http: Arc<RwLock<Option<Arc<Http>>>>,
+    webhook_cache: Arc<RwLock<std::collections::HashMap<String, WebhookInfo>>>,
 }
 
-#[derive(Default)]
 struct DiscordLoginState {
     is_logged_in: bool,
     gateway_task: Option<tokio::task::JoinHandle<()>>,
 }
 
+impl Default for DiscordLoginState {
+    fn default() -> Self {
+        Self {
+            is_logged_in: false,
+            gateway_task: None,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct WebhookInfo {
+    id: u64,
+    token: String,
+}
+
 struct ReadySignalHandler {
     ready_sender: Arc<tokio::sync::Mutex<Option<oneshot::Sender<()>>>>,
     bridge: Arc<RwLock<Option<Arc<BridgeCore>>>>,
+    http_sender: Arc<tokio::sync::Mutex<Option<oneshot::Sender<Arc<Http>>>>>,
 }
 
 #[serenity::async_trait]
 impl SerenityEventHandler for ReadySignalHandler {
-    async fn ready(&self, _ctx: SerenityContext, ready: Ready) {
+    async fn ready(&self, ctx: SerenityContext, ready: Ready) {
         info!(
             "discord gateway ready as {} ({})",
             ready.user.name, ready.user.id
         );
         if let Some(sender) = self.ready_sender.lock().await.take() {
             let _ = sender.send(());
+        }
+        if let Some(sender) = self.http_sender.lock().await.take() {
+            let _ = sender.send(ctx.http);
         }
     }
 
@@ -298,6 +320,8 @@ impl DiscordClient {
             send_lock: Arc::new(tokio::sync::Mutex::new(())),
             login_state: Arc::new(tokio::sync::Mutex::new(DiscordLoginState::default())),
             bridge: Arc::new(RwLock::new(None)),
+            http: Arc::new(RwLock::new(None)),
+            webhook_cache: Arc::new(RwLock::new(std::collections::HashMap::new())),
         })
     }
 
@@ -318,9 +342,11 @@ impl DiscordClient {
         };
 
         let (ready_tx, ready_rx) = oneshot::channel();
+        let (http_tx, http_rx) = oneshot::channel();
         let event_handler = ReadySignalHandler {
             ready_sender: Arc::new(tokio::sync::Mutex::new(Some(ready_tx))),
             bridge: self.bridge.clone(),
+            http_sender: Arc::new(tokio::sync::Mutex::new(Some(http_tx))),
         };
 
         let mut gateway_client = SerenityClient::builder(&self._config.auth.bot_token, intents)
@@ -339,6 +365,13 @@ impl DiscordClient {
                 state.is_logged_in = true;
                 state.gateway_task = Some(gateway_task);
                 info!("discord bot login succeeded and gateway is connected");
+                
+                if let Ok(http) = tokio::time::timeout(std::time::Duration::from_secs(5), http_rx).await {
+                    if let Ok(http) = http {
+                        *self.http.write().await = Some(http);
+                    }
+                }
+                
                 Ok(())
             }
             Ok(Err(_)) => {
@@ -419,15 +452,182 @@ impl DiscordClient {
         reply_to: Option<&str>,
         edit_of: Option<&str>,
     ) -> Result<String> {
+        self.send_message_with_metadata_as_user(
+            channel_id,
+            content,
+            attachments,
+            reply_to,
+            edit_of,
+            None,
+            None,
+        ).await
+    }
+
+    pub async fn send_message_with_metadata_as_user(
+        &self,
+        channel_id: &str,
+        content: &str,
+        attachments: &[String],
+        reply_to: Option<&str>,
+        edit_of: Option<&str>,
+        username: Option<&str>,
+        avatar_url: Option<&str>,
+    ) -> Result<String> {
         debug!(
-            "Discord send channel={} reply_to={:?} edit_of={:?} attachments={} content={}",
+            "Discord send channel={} reply_to={:?} edit_of={:?} attachments={} username={:?} content={}",
             channel_id,
             reply_to,
             edit_of,
             attachments.len(),
+            username,
             content
         );
-        self.send_message(channel_id, content).await
+
+        let _guard = self.send_lock.lock().await;
+
+        let delay = self._config.limits.discord_send_delay;
+        if delay > 0 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(delay)).await;
+        }
+
+        let http_guard = self.http.read().await;
+        let Some(http) = http_guard.as_ref() else {
+            warn!("discord http client not available, using mock");
+            return self.send_message(channel_id, content).await;
+        };
+
+        let channel_id_num: u64 = channel_id.parse()
+            .map_err(|_| anyhow!("invalid channel id: {}", channel_id))?;
+
+        if self._config.channel.enable_webhook && username.is_some() {
+            match self.get_or_create_webhook(http, channel_id_num).await {
+                Ok(webhook_info) => {
+                    return self.send_via_webhook(
+                        http,
+                        &webhook_info,
+                        content,
+                        attachments,
+                        reply_to,
+                        edit_of,
+                        username.unwrap(),
+                        avatar_url,
+                    ).await;
+                }
+                Err(err) => {
+                    warn!("failed to get/create webhook, falling back to direct send: {}", err);
+                }
+            }
+        }
+
+        self.send_direct_message(http, channel_id_num, content, attachments, reply_to, edit_of).await
+    }
+
+    async fn get_or_create_webhook(&self, http: &Http, channel_id: u64) -> Result<WebhookInfo> {
+        if let Some(info) = self.webhook_cache.read().await.get(&channel_id.to_string()) {
+            return Ok(info.clone());
+        }
+
+        let channel = ChannelId::new(channel_id);
+        let webhooks = channel.webhooks(http).await
+            .map_err(|e| anyhow!("failed to fetch webhooks: {}", e))?;
+
+        let webhook_name = &self._config.channel.webhook_name;
+        let existing = webhooks.iter().find(|w| w.name.as_deref() == Some(webhook_name));
+
+        let info = if let Some(webhook) = existing {
+            let token = webhook.token.clone()
+                .ok_or_else(|| anyhow!("webhook has no token"))?
+                .expose_secret()
+                .to_string();
+            WebhookInfo {
+                id: webhook.id.get(),
+                token,
+            }
+        } else {
+            use serenity::builder::CreateWebhook;
+            let webhook: serenity::model::webhook::Webhook = channel
+                .create_webhook(http, CreateWebhook::new(webhook_name))
+                .await
+                .map_err(|e| anyhow!("failed to create webhook: {}", e))?;
+            
+            let token = webhook.token.clone()
+                .ok_or_else(|| anyhow!("created webhook has no token"))?
+                .expose_secret()
+                .to_string();
+            
+            WebhookInfo {
+                id: webhook.id.get(),
+                token,
+            }
+        };
+
+        self.webhook_cache.write().await.insert(channel_id.to_string(), info.clone());
+        Ok(info)
+    }
+
+    async fn send_via_webhook(
+        &self,
+        http: &Http,
+        webhook_info: &WebhookInfo,
+        content: &str,
+        _attachments: &[String],
+        _reply_to: Option<&str>,
+        _edit_of: Option<&str>,
+        username: &str,
+        avatar_url: Option<&str>,
+    ) -> Result<String> {
+        use serenity::builder::ExecuteWebhook;
+        
+        let webhook_url = format!(
+            "https://discord.com/api/webhooks/{}/{}",
+            webhook_info.id, webhook_info.token
+        );
+        
+        let webhook = Webhook::from_url(http, &webhook_url).await
+            .map_err(|e| anyhow!("failed to parse webhook url: {}", e))?;
+
+        let mut builder = ExecuteWebhook::new()
+            .content(content)
+            .username(username);
+        
+        if let Some(avatar) = avatar_url {
+            builder = builder.avatar_url(avatar);
+        }
+
+        let message = webhook.execute(http, false, builder).await
+            .map_err(|e| anyhow!("webhook send failed: {}", e))?
+            .ok_or_else(|| anyhow!("webhook execution returned no message"))?;
+
+        info!("sent message via webhook to channel, message_id={}", message.id);
+        Ok(message.id.to_string())
+    }
+
+    async fn send_direct_message(
+        &self,
+        http: &Http,
+        channel_id: u64,
+        content: &str,
+        attachments: &[String],
+        _reply_to: Option<&str>,
+        _edit_of: Option<&str>,
+    ) -> Result<String> {
+        use serenity::builder::CreateMessage;
+        
+        let channel = ChannelId::new(channel_id);
+        
+        let mut message_content = content.to_string();
+        for attachment in attachments {
+            if !message_content.is_empty() {
+                message_content.push('\n');
+            }
+            message_content.push_str(attachment);
+        }
+
+        let message = channel.send_message(http, CreateMessage::new().content(&message_content)).await
+            .map_err(|e| anyhow!("direct message send failed: {}", e))?;
+
+        info!("sent message directly to channel {}, message_id={}", channel_id, message.id);
+        Ok(message.id.to_string())
     }
 
     pub async fn get_user(&self, user_id: &str) -> Result<Option<DiscordUser>> {

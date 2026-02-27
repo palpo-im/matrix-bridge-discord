@@ -308,6 +308,9 @@ mod tests {
                 name_pattern: "[Discord] :guild :name".to_string(),
                 topic_format: ":topic".to_string(),
                 delete_options: ChannelDeleteOptionsConfig::default(),
+                enable_webhook: true,
+                webhook_name: "_matrix".to_string(),
+                webhook_avatar: String::new(),
             },
             limits: LimitsConfig::default(),
             ghosts: GhostsConfig {

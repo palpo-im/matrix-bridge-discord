@@ -59,6 +59,7 @@ parking_lot = "0.12"
 metrics = { version = "0.24.3", optional = true }
 metrics-exporter-prometheus = { version = "0.18.1", optional = true }
 matrix-bot-sdk = { version = "0.2.3", features = ["appservice"] }
+secrecy = "0.8"
 
 [dev-dependencies]
 tokio-test = "0.4"

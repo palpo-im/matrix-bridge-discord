@@ -320,6 +320,21 @@ impl MatrixAppservice {
         Ok(())
     }
 
+    pub async fn get_user_profile(
+        &self,
+        user_id: &str,
+    ) -> Result<Option<(String, Option<String>)>> {
+        let profile = self.appservice.client.profile(user_id).await;
+        match profile {
+            Ok(profile) => {
+                let displayname = profile.displayname.unwrap_or_else(|| user_id.to_string());
+                let avatar_url = profile.avatar_url;
+                Ok(Some((displayname, avatar_url)))
+            }
+            Err(_) => Ok(None),
+        }
+    }
+
     pub async fn set_discord_user_presence(
         &self,
         discord_user_id: &str,

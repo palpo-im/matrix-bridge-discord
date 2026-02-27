@@ -11,6 +11,7 @@ use crate::discord::{
     DiscordClient, DiscordCommandHandler, DiscordCommandOutcome, ModerationAction,
 };
 use crate::matrix::{MatrixAppservice, MatrixCommandHandler, MatrixCommandOutcome, MatrixEvent};
+use crate::media::MediaHandler;
 
 pub mod message_flow;
 pub mod logic;
@@ -51,6 +52,7 @@ pub struct BridgeCore {
     discord_command_handler: Arc<DiscordCommandHandler>,
     presence_handler: Arc<PresenceHandler>,
     provisioning: Arc<ProvisioningCoordinator>,
+    media_handler: Arc<MediaHandler>,
 }
 
 impl BridgeCore {
@@ -60,6 +62,7 @@ impl BridgeCore {
         db_manager: Arc<DatabaseManager>,
     ) -> Self {
         let bridge_config = matrix_client.config().bridge.clone();
+        let homeserver_url = matrix_client.config().bridge.homeserver_url.clone();
         Self {
             message_flow: Arc::new(MessageFlow::new(
                 matrix_client.clone(),
@@ -72,6 +75,7 @@ impl BridgeCore {
             discord_command_handler: Arc::new(DiscordCommandHandler::new()),
             presence_handler: Arc::new(PresenceHandler::new(None)),
             provisioning: Arc::new(ProvisioningCoordinator::default()),
+            media_handler: Arc::new(MediaHandler::new(&homeserver_url)),
             matrix_client,
             discord_client,
             db_manager,
@@ -220,7 +224,7 @@ impl BridgeCore {
             outbound.content.len(),
             preview_text(&outbound.content)
         );
-        self.send_to_discord_message(&mapping.discord_channel_id, outbound)
+        self.send_to_discord_message_as_user(&mapping.discord_channel_id, outbound, &event.sender)
             .await?;
         Ok(())
     }
@@ -536,6 +540,63 @@ impl BridgeCore {
                 outbound.edit_of.as_deref(),
             )
             .await?;
+        debug!(
+            "discord message sent channel_id={} content_len={}",
+            discord_channel_id,
+            content.len()
+        );
+        Ok(())
+    }
+
+    pub async fn send_to_discord_message_as_user(
+        &self,
+        discord_channel_id: &str,
+        outbound: OutboundDiscordMessage,
+        matrix_sender: &str,
+    ) -> Result<()> {
+        let content = outbound.render_content();
+        
+        let (username, avatar_url) = self.matrix_client
+            .get_user_profile(matrix_sender)
+            .await
+            .unwrap_or(None)
+            .unwrap_or_else(|| (matrix_sender.to_string(), None));
+
+        let avatar_url_ref = avatar_url.as_deref();
+        let avatar_for_discord = avatar_url_ref.and_then(|url| {
+            if url.starts_with("mxc://") {
+                let mxc_url = url.trim_start_matches("mxc://");
+                let homeserver = &self.matrix_client.config().bridge.homeserver_url;
+                Some(format!("{}/_matrix/media/r0/download/{}", homeserver.trim_end_matches('/'), mxc_url))
+            } else {
+                Some(url.to_string())
+            }
+        });
+
+        debug!(
+            "sending discord message via webhook channel_id={} sender={} username={} reply_to={:?} edit_of={:?} attachments={} content_len={} content_preview={}",
+            discord_channel_id,
+            matrix_sender,
+            username,
+            outbound.reply_to,
+            outbound.edit_of,
+            outbound.attachments.len(),
+            content.len(),
+            preview_text(&content)
+        );
+        
+        self.discord_client
+            .send_message_with_metadata_as_user(
+                discord_channel_id,
+                &content,
+                &outbound.attachments,
+                outbound.reply_to.as_deref(),
+                outbound.edit_of.as_deref(),
+                Some(&username),
+                avatar_for_discord.as_deref(),
+            )
+            .await?;
+        
         debug!(
             "discord message sent channel_id={} content_len={}",
             discord_channel_id,

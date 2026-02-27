@@ -272,6 +272,12 @@ pub struct ChannelConfig {
     pub topic_format: String,
     #[serde(default)]
     pub delete_options: ChannelDeleteOptionsConfig,
+    #[serde(default = "default_enable_webhook")]
+    pub enable_webhook: bool,
+    #[serde(default = "default_webhook_name")]
+    pub webhook_name: String,
+    #[serde(default = "default_webhook_avatar")]
+    pub webhook_avatar: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -624,4 +630,16 @@ fn default_metrics_port() -> u16 {
 
 fn default_metrics_bind_address() -> String {
     "127.0.0.1".to_string()
+}
+
+fn default_enable_webhook() -> bool {
+    true
+}
+
+fn default_webhook_name() -> String {
+    "_matrix".to_string()
+}
+
+fn default_webhook_avatar() -> String {
+    "https://matrix.org/_matrix/media/r0/download/matrix.org/mlxoESwIsTbJrfXyAAogrNxA".to_string()
 }

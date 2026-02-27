@@ -2165,6 +2165,7 @@ dependencies = [
  "parking_lot",
  "reqwest 0.13.2",
  "salvo",
+ "secrecy",
  "serde",
  "serde_json",
  "serde_yaml",

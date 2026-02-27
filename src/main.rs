@@ -14,6 +14,7 @@ mod config;
 mod db;
 mod discord;
 mod matrix;
+mod media;
 mod parsers;
 mod utils;
 mod web;
