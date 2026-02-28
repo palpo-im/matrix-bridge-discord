@@ -1,7 +1,9 @@
 use async_trait::async_trait;
 
 use super::DatabaseError;
-use super::models::{EmojiMapping, MessageMapping, RemoteRoomInfo, RemoteUserInfo, RoomMapping, UserMapping};
+use super::models::{
+    EmojiMapping, MessageMapping, RemoteRoomInfo, RemoteUserInfo, RoomMapping, UserMapping,
+};
 
 #[async_trait]
 pub trait RoomStore: Send + Sync {
@@ -23,10 +25,7 @@ pub trait RoomStore: Send + Sync {
     async fn create_room_mapping(&self, mapping: &RoomMapping) -> Result<(), DatabaseError>;
     async fn update_room_mapping(&self, mapping: &RoomMapping) -> Result<(), DatabaseError>;
     async fn delete_room_mapping(&self, id: i64) -> Result<(), DatabaseError>;
-    async fn get_rooms_by_guild(
-        &self,
-        guild_id: &str,
-    ) -> Result<Vec<RoomMapping>, DatabaseError>;
+    async fn get_rooms_by_guild(&self, guild_id: &str) -> Result<Vec<RoomMapping>, DatabaseError>;
     async fn get_remote_room_info(
         &self,
         matrix_room_id: &str,
@@ -78,10 +77,7 @@ pub trait MessageStore: Send + Sync {
         &self,
         discord_message_id: &str,
     ) -> Result<(), DatabaseError>;
-    async fn delete_by_matrix_event_id(
-        &self,
-        matrix_event_id: &str,
-    ) -> Result<(), DatabaseError>;
+    async fn delete_by_matrix_event_id(&self, matrix_event_id: &str) -> Result<(), DatabaseError>;
 }
 
 #[async_trait]
@@ -90,10 +86,7 @@ pub trait EmojiStore: Send + Sync {
         &self,
         discord_emoji_id: &str,
     ) -> Result<Option<EmojiMapping>, DatabaseError>;
-    async fn get_emoji_by_mxc(
-        &self,
-        mxc_url: &str,
-    ) -> Result<Option<EmojiMapping>, DatabaseError>;
+    async fn get_emoji_by_mxc(&self, mxc_url: &str) -> Result<Option<EmojiMapping>, DatabaseError>;
     async fn create_emoji(&self, emoji: &EmojiMapping) -> Result<(), DatabaseError>;
     async fn update_emoji(&self, emoji: &EmojiMapping) -> Result<(), DatabaseError>;
     async fn delete_emoji(&self, discord_emoji_id: &str) -> Result<(), DatabaseError>;

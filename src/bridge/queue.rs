@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+
 use tokio::sync::Mutex;
 
 pub struct ChannelQueue {
@@ -59,9 +60,11 @@ impl Default for ChannelQueue {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use tokio::time::{sleep, Duration};
+
+    use tokio::time::{Duration, sleep};
+
+    use super::*;
 
     #[tokio::test]
     async fn channel_queue_processes_in_order() {
@@ -71,25 +74,31 @@ mod tests {
 
         let c1 = counter.clone();
         let o1 = order.clone();
-        queue.enqueue_fut("channel1", async move {
-            sleep(Duration::from_millis(50)).await;
-            let val = c1.fetch_add(1, Ordering::SeqCst);
-            o1.lock().await.push(val);
-        }).await;
+        queue
+            .enqueue_fut("channel1", async move {
+                sleep(Duration::from_millis(50)).await;
+                let val = c1.fetch_add(1, Ordering::SeqCst);
+                o1.lock().await.push(val);
+            })
+            .await;
 
         let c2 = counter.clone();
         let o2 = order.clone();
-        queue.enqueue_fut("channel1", async move {
-            let val = c2.fetch_add(1, Ordering::SeqCst);
-            o2.lock().await.push(val);
-        }).await;
+        queue
+            .enqueue_fut("channel1", async move {
+                let val = c2.fetch_add(1, Ordering::SeqCst);
+                o2.lock().await.push(val);
+            })
+            .await;
 
         let c3 = counter.clone();
         let o3 = order.clone();
-        queue.enqueue_fut("channel1", async move {
-            let val = c3.fetch_add(1, Ordering::SeqCst);
-            o3.lock().await.push(val);
-        }).await;
+        queue
+            .enqueue_fut("channel1", async move {
+                let val = c3.fetch_add(1, Ordering::SeqCst);
+                o3.lock().await.push(val);
+            })
+            .await;
 
         sleep(Duration::from_millis(200)).await;
 
@@ -103,15 +112,19 @@ mod tests {
         let order = Arc::new(Mutex::new(Vec::new()));
 
         let o1 = order.clone();
-        queue.enqueue_fut("channel1", async move {
-            sleep(Duration::from_millis(50)).await;
-            o1.lock().await.push("ch1");
-        }).await;
+        queue
+            .enqueue_fut("channel1", async move {
+                sleep(Duration::from_millis(50)).await;
+                o1.lock().await.push("ch1");
+            })
+            .await;
 
         let o2 = order.clone();
-        queue.enqueue_fut("channel2", async move {
-            o2.lock().await.push("ch2");
-        }).await;
+        queue
+            .enqueue_fut("channel2", async move {
+                o2.lock().await.push("ch2");
+            })
+            .await;
 
         sleep(Duration::from_millis(100)).await;
 

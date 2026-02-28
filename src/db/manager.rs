@@ -1,25 +1,29 @@
-use crate::config::{DatabaseConfig as ConfigDatabaseConfig, DbType as ConfigDbType};
-use crate::db::{DatabaseError, EmojiStore, MessageStore, RoomStore, UserStore};
 use std::sync::Arc;
 
 #[cfg(feature = "postgres")]
-use crate::db::postgres::{PostgresEmojiStore, PostgresMessageStore, PostgresRoomStore, PostgresUserStore};
+use diesel::RunQueryDsl;
 #[cfg(feature = "postgres")]
 use diesel::pg::PgConnection;
 #[cfg(feature = "postgres")]
 use diesel::r2d2::{self, ConnectionManager};
+
+use crate::config::{DatabaseConfig as ConfigDatabaseConfig, DbType as ConfigDbType};
 #[cfg(feature = "postgres")]
-use diesel::RunQueryDsl;
+use crate::db::postgres::{
+    PostgresEmojiStore, PostgresMessageStore, PostgresRoomStore, PostgresUserStore,
+};
+use crate::db::{DatabaseError, EmojiStore, MessageStore, RoomStore, UserStore};
 
 #[cfg(feature = "postgres")]
 pub type Pool = r2d2::Pool<ConnectionManager<PgConnection>>;
 
 #[cfg(feature = "sqlite")]
-use crate::db::sqlite::{SqliteEmojiStore, SqliteMessageStore, SqliteRoomStore, SqliteUserStore};
+use diesel::Connection;
 #[cfg(feature = "sqlite")]
 use diesel::sqlite::SqliteConnection;
+
 #[cfg(feature = "sqlite")]
-use diesel::Connection;
+use crate::db::sqlite::{SqliteEmojiStore, SqliteMessageStore, SqliteRoomStore, SqliteUserStore};
 
 #[derive(Clone)]
 pub struct DatabaseManager {
@@ -111,13 +115,13 @@ impl DatabaseManager {
             DbType::Postgres => {
                 return Err(DatabaseError::Connection(
                     "PostgreSQL feature not enabled".to_string(),
-                ))
+                ));
             }
             #[cfg(not(feature = "sqlite"))]
             DbType::Sqlite => {
                 return Err(DatabaseError::Connection(
                     "SQLite feature not enabled".to_string(),
-                ))
+                ));
             }
         }
     }
@@ -125,7 +129,7 @@ impl DatabaseManager {
     #[cfg(feature = "sqlite")]
     pub fn new_in_memory() -> Result<Self, DatabaseError> {
         use std::sync::Arc;
-        
+
         let path_arc = Arc::new(":memory:".to_string());
 
         let room_store = Arc::new(SqliteRoomStore::new(path_arc.clone()));
@@ -161,13 +165,13 @@ impl DatabaseManager {
             DbType::Postgres => {
                 return Err(DatabaseError::Migration(
                     "PostgreSQL feature not enabled".to_string(),
-                ))
+                ));
             }
             #[cfg(not(feature = "sqlite"))]
             DbType::Sqlite => {
                 return Err(DatabaseError::Migration(
                     "SQLite feature not enabled".to_string(),
-                ))
+                ));
             }
         }
     }

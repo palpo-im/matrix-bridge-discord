@@ -3,13 +3,12 @@ use chrono::{DateTime, Utc};
 use diesel::pg::PgConnection;
 use diesel::prelude::*;
 
+use super::DatabaseError;
+use super::models::{
+    EmojiMapping, MessageMapping, RemoteRoomInfo, RemoteUserInfo, RoomMapping, UserMapping,
+};
 use crate::db::manager::Pool;
 use crate::db::schema::{message_mappings, room_mappings, user_mappings};
-
-use super::{
-    DatabaseError,
-    models::{EmojiMapping, MessageMapping, RemoteRoomInfo, RemoteUserInfo, RoomMapping, UserMapping},
-};
 
 #[derive(Debug, Clone, Queryable, Selectable)]
 #[diesel(table_name = room_mappings)]
@@ -315,10 +314,7 @@ impl super::RoomStore for PostgresRoomStore {
         .await
     }
 
-    async fn get_rooms_by_guild(
-        &self,
-        guild_id: &str,
-    ) -> Result<Vec<RoomMapping>, DatabaseError> {
+    async fn get_rooms_by_guild(&self, guild_id: &str) -> Result<Vec<RoomMapping>, DatabaseError> {
         let pool = self.pool.clone();
         let guild_id = guild_id.to_string();
         with_connection(pool, move |conn| {
@@ -683,10 +679,7 @@ impl super::EmojiStore for PostgresEmojiStore {
         .await
     }
 
-    async fn get_emoji_by_mxc(
-        &self,
-        mxc_url: &str,
-    ) -> Result<Option<EmojiMapping>, DatabaseError> {
+    async fn get_emoji_by_mxc(&self, mxc_url: &str) -> Result<Option<EmojiMapping>, DatabaseError> {
         let pool = self.pool.clone();
         let mxc_url = mxc_url.to_string();
         with_connection(pool, move |conn| {
@@ -733,10 +726,9 @@ impl super::EmojiStore for PostgresEmojiStore {
                 mxc_url: &emoji.mxc_url,
                 updated_at: &emoji.updated_at,
             };
-            diesel::update(
-                crate::db::schema::emoji_mappings::table
-                    .filter(crate::db::schema::emoji_mappings::discord_emoji_id.eq(&emoji.discord_emoji_id))
-            )
+            diesel::update(crate::db::schema::emoji_mappings::table.filter(
+                crate::db::schema::emoji_mappings::discord_emoji_id.eq(&emoji.discord_emoji_id),
+            ))
             .set(changes)
             .execute(conn)
             .map(|_| ())
@@ -750,8 +742,9 @@ impl super::EmojiStore for PostgresEmojiStore {
         let discord_emoji_id = discord_emoji_id.to_string();
         with_connection(pool, move |conn| {
             diesel::delete(
-                crate::db::schema::emoji_mappings::table
-                    .filter(crate::db::schema::emoji_mappings::discord_emoji_id.eq(discord_emoji_id))
+                crate::db::schema::emoji_mappings::table.filter(
+                    crate::db::schema::emoji_mappings::discord_emoji_id.eq(discord_emoji_id),
+                ),
             )
             .execute(conn)
             .map(|_| ())

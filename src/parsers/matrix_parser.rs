@@ -5,9 +5,8 @@ use chrono::Utc;
 use regex::Regex;
 use serde_json::Value;
 
-use crate::matrix::{MatrixAppservice, MatrixEvent};
-
 use super::common::{BridgeMessage, MessageUtils, ParsedMessage};
+use crate::matrix::{MatrixAppservice, MatrixEvent};
 
 pub struct MatrixMessageParser {
     _client: Arc<MatrixAppservice>,
@@ -89,11 +88,11 @@ impl MatrixToDiscordConverter {
         discord_channel_id: &str,
     ) -> Result<BridgeMessage> {
         let content = matrix_event.content.as_ref();
-        
+
         let formatted_body = content
             .and_then(|c| c.get("formatted_body"))
             .and_then(Value::as_str);
-        
+
         let plain = content
             .map(MessageUtils::extract_plain_text)
             .unwrap_or_default();
@@ -134,12 +133,11 @@ impl MatrixToDiscordConverter {
             attachments.push(url.to_string());
         }
 
-        if let Some(obj) = content.as_object() {
-            if let Some(info) = obj.get("info").and_then(Value::as_object) {
-                if let Some(thumbnail_url) = info.get("thumbnail_url").and_then(Value::as_str) {
-                    attachments.push(thumbnail_url.to_string());
-                }
-            }
+        if let Some(obj) = content.as_object()
+            && let Some(info) = obj.get("info").and_then(Value::as_object)
+            && let Some(thumbnail_url) = info.get("thumbnail_url").and_then(Value::as_str)
+        {
+            attachments.push(thumbnail_url.to_string());
         }
 
         attachments
@@ -150,18 +148,18 @@ impl MatrixToDiscordConverter {
         let relates_to = content.get("m.relates_to")?.as_object()?;
         let in_reply_to = relates_to.get("m.in_reply_to")?.as_object()?;
         let event_id = in_reply_to.get("event_id")?.as_str()?;
-        
+
         Some((event_id.to_string(), "Reply".to_string()))
     }
 
     pub fn extract_edit_info(&self, content: Option<&Value>) -> Option<String> {
         let content = content?.as_object()?;
         let relates_to = content.get("m.relates_to")?.as_object()?;
-        
+
         if relates_to.get("rel_type")?.as_str()? != "m.replace" {
             return None;
         }
-        
+
         relates_to.get("event_id")?.as_str().map(ToOwned::to_owned)
     }
 
@@ -169,7 +167,7 @@ impl MatrixToDiscordConverter {
         let content = content?.as_object()?;
         let new_content = content.get("m.new_content")?.as_object()?;
         let body = new_content.get("body")?.as_str()?;
-        
+
         Some(self.format_for_discord(body))
     }
 
@@ -265,7 +263,7 @@ mod tests {
             },
             metrics: crate::config::MetricsConfig::default(),
         });
-        
+
         MatrixToDiscordConverter::new(Arc::new(MatrixAppservice::new(config).await.unwrap()))
     }
 
@@ -307,7 +305,8 @@ mod tests {
     #[tokio::test]
     async fn converts_html_link_to_discord_format() {
         let converter = make_converter().await;
-        let result = converter.format_html_for_discord(r#"<a href="https://example.com">Example</a>"#);
+        let result =
+            converter.format_html_for_discord(r#"<a href="https://example.com">Example</a>"#);
         assert_eq!(result, "[Example](https://example.com)");
     }
 

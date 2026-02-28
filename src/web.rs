@@ -19,7 +19,7 @@ mod thirdparty;
 use health::{get_status, health_check};
 use metrics::metrics_endpoint;
 use provisioning::{create_bridge, delete_bridge, get_bridge_info, list_rooms};
-use thirdparty::{get_protocol, get_networks, get_locations, get_users};
+use thirdparty::{get_locations, get_networks, get_protocol, get_users};
 
 #[derive(Clone)]
 pub struct WebState {

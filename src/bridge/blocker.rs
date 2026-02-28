@@ -39,7 +39,7 @@ pub struct BridgeBlocker {
 impl BridgeBlocker {
     pub fn new(db: Arc<DatabaseManager>, config: Arc<Config>) -> Self {
         let user_limit = config.bridge.user_limit.unwrap_or(DEFAULT_USER_LIMIT);
-        
+
         Self {
             db,
             config,
@@ -59,12 +59,12 @@ impl BridgeBlocker {
     pub async fn check_and_update(&self) -> Result<BridgeState> {
         let active_users = self.count_active_users().await?;
         let total_rooms = self.count_rooms().await?;
-        
+
         let mut status = self.state.write().await;
         status.active_users = active_users;
         status.total_rooms = total_rooms;
         status.last_check = Instant::now();
-        
+
         if active_users > self.user_limit as u64 {
             status.state = BridgeState::Limited;
             status.pause_reason = Some(format!(
@@ -77,7 +77,7 @@ impl BridgeBlocker {
             status.pause_reason = None;
             info!("Bridge restored to active state");
         }
-        
+
         Ok(status.state.clone())
     }
 

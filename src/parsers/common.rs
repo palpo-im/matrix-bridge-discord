@@ -1,7 +1,8 @@
+use std::collections::HashSet;
+
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashSet;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParsedMessage {
@@ -240,7 +241,7 @@ impl MessageUtils {
 
     fn convert_html_lists(html: &str) -> String {
         let li_re = Regex::new(r"<li>([^<]*)</li>").unwrap();
-        let mut result = li_re.replace_all(&html, "- $1\n").to_string();
+        let mut result = li_re.replace_all(html, "- $1\n").to_string();
 
         let ul_re = Regex::new(r"</?ul>").unwrap();
         result = ul_re.replace_all(&result, "").to_string();

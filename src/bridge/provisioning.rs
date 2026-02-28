@@ -1,4 +1,5 @@
-use std::{collections::HashMap, time::Duration};
+use std::collections::HashMap;
+use std::time::Duration;
 
 use parking_lot::Mutex;
 use tokio::sync::oneshot;
@@ -60,7 +61,7 @@ impl ProvisioningCoordinator {
             .lock()
             .insert(channel_id.to_string(), PendingRequest { decision_tx });
 
-        let timeout_minutes = (self.timeout.as_secs().max(60) + 59) / 60;
+        let timeout_minutes = self.timeout.as_secs().max(60).div_ceil(60);
         let prompt = format!(
             "{requestor} on matrix would like to bridge this channel. Someone with permission to manage webhooks please reply with `!matrix approve` or `!matrix deny` in the next {timeout_minutes} minutes."
         );

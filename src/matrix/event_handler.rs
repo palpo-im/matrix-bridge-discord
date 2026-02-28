@@ -125,21 +125,24 @@ impl MatrixEventProcessor {
             return true;
         }
 
-        if let Some(ts_str) = &event.timestamp {
-            if let Ok(ts) = ts_str.parse::<i64>() {
-                let now = chrono::Utc::now().timestamp_millis();
-                if ts > now {
-                    debug!("event timestamp is in the future, allowing event_id={:?}", event.event_id);
-                    return true;
-                }
-                let age = now - ts;
-                if age > age_limit_ms {
-                    info!(
-                        "skipping event due to age {}ms > {}ms event_id={:?} room_id={} type={}",
-                        age, age_limit_ms, event.event_id, event.room_id, event.event_type
-                    );
-                    return false;
-                }
+        if let Some(ts_str) = &event.timestamp
+            && let Ok(ts) = ts_str.parse::<i64>()
+        {
+            let now = chrono::Utc::now().timestamp_millis();
+            if ts > now {
+                debug!(
+                    "event timestamp is in the future, allowing event_id={:?}",
+                    event.event_id
+                );
+                return true;
+            }
+            let age = now - ts;
+            if age > age_limit_ms {
+                info!(
+                    "skipping event due to age {}ms > {}ms event_id={:?} room_id={} type={}",
+                    age, age_limit_ms, event.event_id, event.room_id, event.event_type
+                );
+                return false;
             }
         }
         true
@@ -184,26 +187,38 @@ mod tests {
     fn check_event_age_allows_recent_events() {
         let now = chrono::Utc::now().timestamp_millis();
         let event = make_event(Some(&now.to_string()));
-        assert!(MatrixEventProcessor::check_event_age(&event, DEFAULT_AGE_LIMIT_MS));
+        assert!(MatrixEventProcessor::check_event_age(
+            &event,
+            DEFAULT_AGE_LIMIT_MS
+        ));
     }
 
     #[test]
     fn check_event_age_rejects_old_events() {
         let old_ts = chrono::Utc::now().timestamp_millis() - 1_000_000;
         let event = make_event(Some(&old_ts.to_string()));
-        assert!(!MatrixEventProcessor::check_event_age(&event, DEFAULT_AGE_LIMIT_MS));
+        assert!(!MatrixEventProcessor::check_event_age(
+            &event,
+            DEFAULT_AGE_LIMIT_MS
+        ));
     }
 
     #[test]
     fn check_event_age_allows_events_without_timestamp() {
         let event = make_event(None);
-        assert!(MatrixEventProcessor::check_event_age(&event, DEFAULT_AGE_LIMIT_MS));
+        assert!(MatrixEventProcessor::check_event_age(
+            &event,
+            DEFAULT_AGE_LIMIT_MS
+        ));
     }
 
     #[test]
     fn check_event_age_allows_future_events() {
         let future_ts = chrono::Utc::now().timestamp_millis() + 60_000;
         let event = make_event(Some(&future_ts.to_string()));
-        assert!(MatrixEventProcessor::check_event_age(&event, DEFAULT_AGE_LIMIT_MS));
+        assert!(MatrixEventProcessor::check_event_age(
+            &event,
+            DEFAULT_AGE_LIMIT_MS
+        ));
     }
 }

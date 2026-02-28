@@ -1,5 +1,6 @@
+use std::collections::HashSet;
 use std::sync::Arc;
-use std::{collections::HashSet, time::Duration};
+use std::time::Duration;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -75,14 +76,14 @@ impl BridgeCore {
     ) -> Self {
         let bridge_config = matrix_client.config().bridge.clone();
         let homeserver_url = matrix_client.config().bridge.homeserver_url.clone();
-        
+
         let media_handler = Arc::new(MediaHandler::new(&homeserver_url));
         let emoji_handler = Arc::new(EmojiHandler::new(
             db_manager.clone(),
             media_handler.clone(),
             homeserver_url.clone(),
         ));
-        
+
         Self {
             message_flow: Arc::new(MessageFlow::with_emoji_handler(
                 matrix_client.clone(),
@@ -99,7 +100,9 @@ impl BridgeCore {
             media_handler,
             emoji_handler,
             message_queue: Arc::new(ChannelQueue::new()),
-            room_cache: Arc::new(AsyncTimedCache::new(Duration::from_secs(ROOM_CACHE_TTL_SECS))),
+            room_cache: Arc::new(AsyncTimedCache::new(Duration::from_secs(
+                ROOM_CACHE_TTL_SECS,
+            ))),
             matrix_client,
             discord_client,
             db_manager,
@@ -179,7 +182,9 @@ impl BridgeCore {
             .await?;
 
         if let Some(ref m) = mapping {
-            self.room_cache.insert(matrix_room_id.to_string(), m.clone()).await;
+            self.room_cache
+                .insert(matrix_room_id.to_string(), m.clone())
+                .await;
         }
 
         Ok(mapping)
@@ -287,8 +292,10 @@ impl BridgeCore {
             outbound.content.len(),
             preview_text(&outbound.content)
         );
-        
-        let downloaded_attachments = self.download_matrix_attachments(&outbound.attachments).await;
+
+        let downloaded_attachments = self
+            .download_matrix_attachments(&outbound.attachments)
+            .await;
 
         self.send_to_discord_with_attachments(
             &mapping.discord_channel_id,
@@ -300,7 +307,10 @@ impl BridgeCore {
         Ok(())
     }
 
-    async fn download_matrix_attachments(&self, urls: &[String]) -> Vec<(String, Option<crate::media::MediaInfo>)> {
+    async fn download_matrix_attachments(
+        &self,
+        urls: &[String],
+    ) -> Vec<(String, Option<crate::media::MediaInfo>)> {
         let mut results = Vec::new();
         for url in urls {
             if url.starts_with("mxc://") {
@@ -329,14 +339,16 @@ impl BridgeCore {
     }
 
     async fn get_reply_info(&self, matrix_event_id: &str) -> Option<(String, String)> {
-        let mapping = self.db_manager
+        let mapping = self
+            .db_manager
             .message_store()
             .get_by_matrix_event_id(matrix_event_id)
             .await
             .ok()
             .flatten()?;
 
-        let sender_displayname = self.matrix_client
+        let sender_displayname = self
+            .matrix_client
             .get_user_profile(&mapping.matrix_room_id)
             .await
             .ok()
@@ -353,8 +365,6 @@ impl BridgeCore {
         outbound: message_flow::OutboundDiscordMessage,
         attachments: Vec<(String, Option<crate::media::MediaInfo>)>,
     ) -> Result<()> {
-        let mut last_message_id: Option<String> = None;
-
         for (original_url, media_opt) in &attachments {
             if let Some(media) = media_opt {
                 if media.size > 8 * 1024 * 1024 {
@@ -363,13 +373,12 @@ impl BridgeCore {
                         media.size
                     );
                     let content = format!("{}: {}", media.filename, original_url);
-                    last_message_id = Some(
-                        self.discord_client
-                            .send_message(&discord_channel_id, &content)
-                            .await?,
-                    );
+                    self.discord_client
+                        .send_message(discord_channel_id, &content)
+                        .await?;
                 } else {
-                    match self.discord_client
+                    match self
+                        .discord_client
                         .send_file_as_user(
                             discord_channel_id,
                             &media.data,
@@ -385,54 +394,47 @@ impl BridgeCore {
                                 "uploaded matrix attachment to discord channel={} file={} size={}",
                                 discord_channel_id, media.filename, media.size
                             );
-                            last_message_id = Some(msg_id);
+                            let _ = msg_id;
                         }
                         Err(e) => {
-                            warn!("failed to upload attachment to discord: {}, sending URL instead", e);
-                            let content = format!("{}: {}", media.filename, original_url);
-                            last_message_id = Some(
-                                self.discord_client
-                                    .send_message(&discord_channel_id, &content)
-                                    .await?,
+                            warn!(
+                                "failed to upload attachment to discord: {}, sending URL instead",
+                                e
                             );
+                            let content = format!("{}: {}", media.filename, original_url);
+                            self.discord_client
+                                .send_message(discord_channel_id, &content)
+                                .await?;
                         }
                     }
                 }
             } else {
                 let content = format!("Attachment: {}", original_url);
-                last_message_id = Some(
-                    self.discord_client
-                        .send_message(&discord_channel_id, &content)
-                        .await?,
-                );
+                self.discord_client
+                    .send_message(discord_channel_id, &content)
+                    .await?;
             }
         }
 
         if let Some(ref embed) = outbound.embed {
             if let Some(ref author) = embed.author {
-                last_message_id = Some(
-                    self.discord_client
-                        .send_embed_as_user(
-                            discord_channel_id,
-                            embed,
-                            Some(&author.name),
-                            author.icon_url.as_deref(),
-                        )
-                        .await?,
-                );
+                self.discord_client
+                    .send_embed_as_user(
+                        discord_channel_id,
+                        embed,
+                        Some(&author.name),
+                        author.icon_url.as_deref(),
+                    )
+                    .await?;
             } else {
-                last_message_id = Some(
-                    self.discord_client
-                        .send_embed_as_user(discord_channel_id, embed, None, None)
-                        .await?,
-                );
+                self.discord_client
+                    .send_embed_as_user(discord_channel_id, embed, None, None)
+                    .await?;
             }
         } else if !outbound.content.is_empty() {
-            last_message_id = Some(
-                self.discord_client
-                    .send_message(&discord_channel_id, &outbound.content)
-                    .await?,
-            );
+            self.discord_client
+                .send_message(discord_channel_id, &outbound.content)
+                .await?;
         }
 
         Ok(())
@@ -445,23 +447,26 @@ impl BridgeCore {
         matrix_sender: &str,
         attachments: Vec<(String, Option<crate::media::MediaInfo>)>,
     ) -> Result<()> {
-        let (username, avatar_url) = self.matrix_client
+        let (username, avatar_url) = self
+            .matrix_client
             .get_user_profile(matrix_sender)
             .await
             .unwrap_or(None)
             .unwrap_or_else(|| (matrix_sender.to_string(), None));
 
-        let avatar_for_discord = avatar_url.as_ref().and_then(|url| {
+        let avatar_for_discord = avatar_url.as_ref().map(|url| {
             if url.starts_with("mxc://") {
                 let mxc_url = url.trim_start_matches("mxc://");
                 let homeserver = &self.matrix_client.config().bridge.homeserver_url;
-                Some(format!("{}/_matrix/media/r0/download/{}", homeserver.trim_end_matches('/'), mxc_url))
+                format!(
+                    "{}/_matrix/media/r0/download/{}",
+                    homeserver.trim_end_matches('/'),
+                    mxc_url
+                )
             } else {
-                Some(url.to_string())
+                url.to_string()
             }
         });
-
-        let mut last_message_id: Option<String> = None;
 
         for (original_url, media_opt) in &attachments {
             if let Some(media) = media_opt {
@@ -471,21 +476,20 @@ impl BridgeCore {
                         media.size
                     );
                     let content = format!("{}: {}", media.filename, original_url);
-                    last_message_id = Some(
-                        self.discord_client
-                            .send_message_with_metadata_as_user(
-                                discord_channel_id,
-                                &content,
-                                &[],
-                                None,
-                                None,
-                                Some(&username),
-                                avatar_for_discord.as_deref(),
-                            )
-                            .await?,
-                    );
+                    self.discord_client
+                        .send_message_with_metadata_as_user(
+                            discord_channel_id,
+                            &content,
+                            &[],
+                            None,
+                            None,
+                            Some(&username),
+                            avatar_for_discord.as_deref(),
+                        )
+                        .await?;
                 } else {
-                    match self.discord_client
+                    match self
+                        .discord_client
                         .send_file_as_user(
                             discord_channel_id,
                             &media.data,
@@ -501,63 +505,56 @@ impl BridgeCore {
                                 "uploaded matrix attachment to discord channel={} file={} size={}",
                                 discord_channel_id, media.filename, media.size
                             );
-                            last_message_id = Some(msg_id);
+                            let _ = msg_id;
                         }
                         Err(e) => {
-                            warn!("failed to upload attachment to discord: {}, sending URL instead", e);
-                            let content = format!("{}: {}", media.filename, original_url);
-                            last_message_id = Some(
-                                self.discord_client
-                                    .send_message_with_metadata_as_user(
-                                        discord_channel_id,
-                                        &content,
-                                        &[],
-                                        None,
-                                        None,
-                                        Some(&username),
-                                        avatar_for_discord.as_deref(),
-                                    )
-                                    .await?,
+                            warn!(
+                                "failed to upload attachment to discord: {}, sending URL instead",
+                                e
                             );
+                            let content = format!("{}: {}", media.filename, original_url);
+                            self.discord_client
+                                .send_message_with_metadata_as_user(
+                                    discord_channel_id,
+                                    &content,
+                                    &[],
+                                    None,
+                                    None,
+                                    Some(&username),
+                                    avatar_for_discord.as_deref(),
+                                )
+                                .await?;
                         }
                     }
                 }
             } else {
-                let content = if original_url.starts_with("http") {
-                    format!("Attachment: {}", original_url)
-                } else {
-                    format!("Attachment: {}", original_url)
-                };
-                last_message_id = Some(
-                    self.discord_client
-                        .send_message_with_metadata_as_user(
-                            discord_channel_id,
-                            &content,
-                            &[],
-                            None,
-                            None,
-                            Some(&username),
-                            avatar_for_discord.as_deref(),
-                        )
-                        .await?,
-                );
+                let content = format!("Attachment: {}", original_url);
+                self.discord_client
+                    .send_message_with_metadata_as_user(
+                        discord_channel_id,
+                        &content,
+                        &[],
+                        None,
+                        None,
+                        Some(&username),
+                        avatar_for_discord.as_deref(),
+                    )
+                    .await?;
             }
         }
 
         if !outbound.content.is_empty() {
-            last_message_id = Some(
-                self.discord_client
-                    .send_message_with_metadata_as_user(
-                        discord_channel_id,
-                        &outbound.content,
-                        &[],
-                        outbound.reply_to.as_deref(),
-                        outbound.edit_of.as_deref(),
-                        Some(&username),
-                        avatar_for_discord.as_deref(),
-                    )
-                    .await?,
-            );
+            self.discord_client
+                .send_message_with_metadata_as_user(
+                    discord_channel_id,
+                    &outbound.content,
+                    &[],
+                    outbound.reply_to.as_deref(),
+                    outbound.edit_of.as_deref(),
+                    Some(&username),
+                    avatar_for_discord.as_deref(),
+                )
+                .await?;
         }
 
         Ok(())
@@ -602,140 +599,133 @@ impl BridgeCore {
     }
 
     pub async fn handle_matrix_member(&self, event: &MatrixEvent) -> Result<()> {
-        if let Some(content) = event.content.as_ref().and_then(|c| c.as_object()) {
-            if let Some(membership) = content.get("membership").and_then(|v| v.as_str()) {
-                let bot_user_id = self.matrix_client.bot_user_id();
-                if membership == "invite"
-                    && event.state_key.as_deref() == Some(bot_user_id.as_str())
+        if let Some(content) = event.content.as_ref().and_then(|c| c.as_object())
+            && let Some(membership) = content.get("membership").and_then(|v| v.as_str())
+        {
+            let bot_user_id = self.matrix_client.bot_user_id();
+            if membership == "invite" && event.state_key.as_deref() == Some(bot_user_id.as_str()) {
+                match self
+                    .matrix_client
+                    .appservice
+                    .client
+                    .join_room(&event.room_id)
+                    .await
                 {
-                    match self
-                        .matrix_client
-                        .appservice
-                        .client
-                        .join_room(&event.room_id)
-                        .await
-                    {
-                        Ok(joined) => {
-                            info!("joined invited room {}", joined);
-                        }
-                        Err(err) => {
-                            warn!("failed to join invited room {}: {}", event.room_id, err);
-                        }
+                    Ok(joined) => {
+                        info!("joined invited room {}", joined);
                     }
-                    return Ok(());
+                    Err(err) => {
+                        warn!("failed to join invited room {}: {}", event.room_id, err);
+                    }
                 }
-                if membership == "invite" {
-                    debug!(
-                        "matrix invite ignored room_id={} state_key={:?} expected_bot={} sender={}",
-                        event.room_id, event.state_key, bot_user_id, event.sender
-                    );
-                }
+                return Ok(());
+            }
+            if membership == "invite" {
+                debug!(
+                    "matrix invite ignored room_id={} state_key={:?} expected_bot={} sender={}",
+                    event.room_id, event.state_key, bot_user_id, event.sender
+                );
+            }
 
-                if self.matrix_client.is_namespaced_user(&event.sender) {
+            if self.matrix_client.is_namespaced_user(&event.sender) {
+                debug!(
+                    "matrix member dropped room_id={} sender={} reason=echo_from_ghost",
+                    event.room_id, event.sender
+                );
+                return Ok(());
+            }
+
+            if (membership == "leave" || membership == "ban")
+                && let Some(state_key) = &event.state_key
+                && event.sender != *state_key
+            {
+                let room_mapping = self.get_room_mapping_cached(&event.room_id).await?;
+                let Some(mapping) = room_mapping else {
                     debug!(
-                        "matrix member dropped room_id={} sender={} reason=echo_from_ghost",
-                        event.room_id, event.sender
+                        "matrix moderation ignored room_id={} reason=no_discord_mapping",
+                        event.room_id
                     );
                     return Ok(());
-                }
+                };
 
-                if (membership == "leave" || membership == "ban")
-                    && let Some(state_key) = &event.state_key
-                    && event.sender != *state_key
+                let Some(discord_user_id) = self.discord_user_id_from_mxid(state_key) else {
+                    debug!(
+                        "matrix moderation ignored room_id={} state_key={} reason=not_discord_ghost",
+                        event.room_id, state_key
+                    );
+                    return Ok(());
+                };
+
+                let reason = content
+                    .get("reason")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("No reason provided");
+
+                if let Err(err) = self
+                    .discord_client
+                    .deny_channel_member_permissions(&mapping.discord_channel_id, &discord_user_id)
+                    .await
                 {
-                    let room_mapping = self.get_room_mapping_cached(&event.room_id).await?;
-                    let Some(mapping) = room_mapping else {
-                        debug!(
-                            "matrix moderation ignored room_id={} reason=no_discord_mapping",
-                            event.room_id
-                        );
-                        return Ok(());
-                    };
-
-                    let Some(discord_user_id) = self.discord_user_id_from_mxid(state_key) else {
-                        debug!(
-                            "matrix moderation ignored room_id={} state_key={} reason=not_discord_ghost",
-                            event.room_id, state_key
-                        );
-                        return Ok(());
-                    };
-
-                    let reason = content
-                        .get("reason")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("No reason provided");
-
-                    if let Err(err) = self
-                        .discord_client
-                        .deny_channel_member_permissions(&mapping.discord_channel_id, &discord_user_id)
-                        .await
-                    {
-                        warn!(
-                            "failed to apply discord deny overwrite for user={} channel={} room={} membership={}: {}",
-                            discord_user_id,
-                            mapping.discord_channel_id,
-                            event.room_id,
-                            membership,
-                            err
-                        );
-                    }
-
-                    let action_word = if membership == "ban" { "banned" } else { "kicked" };
-                    let notice = format!(
-                        "Matrix moderation: `{}` was {} by `{}`. Reason: {}",
-                        state_key, action_word, event.sender, reason
+                    warn!(
+                        "failed to apply discord deny overwrite for user={} channel={} room={} membership={}: {}",
+                        discord_user_id, mapping.discord_channel_id, event.room_id, membership, err
                     );
-                    if let Err(err) = self
-                        .discord_client
-                        .send_message(&mapping.discord_channel_id, &notice)
-                        .await
-                    {
-                        warn!(
-                            "failed to post matrix moderation notice to channel {}: {}",
-                            mapping.discord_channel_id, err
-                        );
-                    }
+                }
 
-                    if membership == "leave" {
-                        let kick_for = self.matrix_client.config().room.kick_for;
-                        if kick_for > 0 {
-                            let target_user = state_key.clone();
-                            let room_id = event.room_id.clone();
-                            let channel_id = mapping.discord_channel_id.clone();
-                            let discord_client = self.discord_client.clone();
-                            let restore_user_id = discord_user_id.clone();
+                let action_word = if membership == "ban" {
+                    "banned"
+                } else {
+                    "kicked"
+                };
+                let notice = format!(
+                    "Matrix moderation: `{}` was {} by `{}`. Reason: {}",
+                    state_key, action_word, event.sender, reason
+                );
+                if let Err(err) = self
+                    .discord_client
+                    .send_message(&mapping.discord_channel_id, &notice)
+                    .await
+                {
+                    warn!(
+                        "failed to post matrix moderation notice to channel {}: {}",
+                        mapping.discord_channel_id, err
+                    );
+                }
 
-                            tokio::spawn(async move {
-                                tokio::time::sleep(tokio::time::Duration::from_millis(kick_for))
-                                    .await;
-                                match discord_client
-                                    .clear_channel_member_overwrite(&channel_id, &restore_user_id)
-                                    .await
-                                {
-                                    Ok(()) => {
-                                        info!(
-                                            "restored discord channel permissions for user={} matrix_user={} room={} channel={} after {}ms",
-                                            restore_user_id,
-                                            target_user,
-                                            room_id,
-                                            channel_id,
-                                            kick_for
-                                        );
-                                    }
-                                    Err(err) => {
-                                        warn!(
-                                            "failed to restore discord channel permissions for user={} matrix_user={} room={} channel={} after {}ms: {}",
-                                            restore_user_id,
-                                            target_user,
-                                            room_id,
-                                            channel_id,
-                                            kick_for,
-                                            err
-                                        );
-                                    }
+                if membership == "leave" {
+                    let kick_for = self.matrix_client.config().room.kick_for;
+                    if kick_for > 0 {
+                        let target_user = state_key.clone();
+                        let room_id = event.room_id.clone();
+                        let channel_id = mapping.discord_channel_id.clone();
+                        let discord_client = self.discord_client.clone();
+                        let restore_user_id = discord_user_id.clone();
+
+                        tokio::spawn(async move {
+                            tokio::time::sleep(tokio::time::Duration::from_millis(kick_for)).await;
+                            match discord_client
+                                .clear_channel_member_overwrite(&channel_id, &restore_user_id)
+                                .await
+                            {
+                                Ok(()) => {
+                                    info!(
+                                        "restored discord channel permissions for user={} matrix_user={} room={} channel={} after {}ms",
+                                        restore_user_id, target_user, room_id, channel_id, kick_for
+                                    );
                                 }
-                            });
-                        }
+                                Err(err) => {
+                                    warn!(
+                                        "failed to restore discord channel permissions for user={} matrix_user={} room={} channel={} after {}ms: {}",
+                                        restore_user_id,
+                                        target_user,
+                                        room_id,
+                                        channel_id,
+                                        kick_for,
+                                        err
+                                    );
+                                }
+                            }
+                        });
                     }
                 }
             }
@@ -780,7 +770,12 @@ impl BridgeCore {
     }
 
     pub async fn handle_matrix_room_name(&self, event: &MatrixEvent) -> Result<()> {
-        if self.matrix_client.config().bridge.disable_room_topic_notifications {
+        if self
+            .matrix_client
+            .config()
+            .bridge
+            .disable_room_topic_notifications
+        {
             return Ok(());
         }
 
@@ -795,7 +790,8 @@ impl BridgeCore {
             .and_then(|c| c.get("name").and_then(|n| n.as_str()))
             .unwrap_or("");
 
-        let sender_displayname = self.matrix_client
+        let sender_displayname = self
+            .matrix_client
             .get_user_profile(&event.sender)
             .await
             .ok()
@@ -803,18 +799,29 @@ impl BridgeCore {
             .map(|(name, _)| name)
             .unwrap_or_else(|| event.sender.clone());
 
-        let message = format!("**{}** changed the room name to: {}", sender_displayname, new_name);
-        
+        let message = format!(
+            "**{}** changed the room name to: {}",
+            sender_displayname, new_name
+        );
+
         self.discord_client
             .send_message(&mapping.discord_channel_id, &message)
             .await?;
 
-        debug!("forwarded room name change to discord channel={}", mapping.discord_channel_id);
+        debug!(
+            "forwarded room name change to discord channel={}",
+            mapping.discord_channel_id
+        );
         Ok(())
     }
 
     pub async fn handle_matrix_room_topic(&self, event: &MatrixEvent) -> Result<()> {
-        if self.matrix_client.config().bridge.disable_room_topic_notifications {
+        if self
+            .matrix_client
+            .config()
+            .bridge
+            .disable_room_topic_notifications
+        {
             return Ok(());
         }
 
@@ -833,7 +840,8 @@ impl BridgeCore {
             .and_then(|c| c.get("topic").and_then(|t| t.as_str()))
             .unwrap_or("");
 
-        let sender_displayname = self.matrix_client
+        let sender_displayname = self
+            .matrix_client
             .get_user_profile(&event.sender)
             .await
             .ok()
@@ -841,13 +849,19 @@ impl BridgeCore {
             .map(|(name, _)| name)
             .unwrap_or_else(|| event.sender.clone());
 
-        let message = format!("**{}** changed the room topic to: {}", sender_displayname, new_topic);
-        
+        let message = format!(
+            "**{}** changed the room topic to: {}",
+            sender_displayname, new_topic
+        );
+
         self.discord_client
             .send_message(&mapping.discord_channel_id, &message)
             .await?;
 
-        debug!("forwarded room topic change to discord channel={}", mapping.discord_channel_id);
+        debug!(
+            "forwarded room topic change to discord channel={}",
+            mapping.discord_channel_id
+        );
         Ok(())
     }
 
@@ -864,23 +878,23 @@ impl BridgeCore {
 
         let domain_suffix = format!(":{}", self.matrix_client.config().bridge.domain);
         let mut changed_users = Vec::new();
-        if let Some(content) = event.content.as_ref().and_then(|c| c.as_object()) {
-            if let Some(users) = content.get("users").and_then(|u| u.as_object()) {
-                for (mxid, level_json) in users {
-                    let Some(level) = level_json.as_i64() else {
-                        continue;
-                    };
-                    let Some(localpart) = mxid.strip_prefix("@_discord_") else {
-                        continue;
-                    };
-                    let Some(discord_user_id) = localpart.strip_suffix(&domain_suffix) else {
-                        continue;
-                    };
-                    if discord_user_id.is_empty() || discord_user_id.contains(':') {
-                        continue;
-                    }
-                    changed_users.push(format!("{} -> {}", discord_user_id, level));
+        if let Some(content) = event.content.as_ref().and_then(|c| c.as_object())
+            && let Some(users) = content.get("users").and_then(|u| u.as_object())
+        {
+            for (mxid, level_json) in users {
+                let Some(level) = level_json.as_i64() else {
+                    continue;
+                };
+                let Some(localpart) = mxid.strip_prefix("@_discord_") else {
+                    continue;
+                };
+                let Some(discord_user_id) = localpart.strip_suffix(&domain_suffix) else {
+                    continue;
+                };
+                if discord_user_id.is_empty() || discord_user_id.contains(':') {
+                    continue;
                 }
+                changed_users.push(format!("{} -> {}", discord_user_id, level));
             }
         }
 
@@ -1067,34 +1081,30 @@ impl BridgeCore {
         let delete_options = &self.matrix_client.config().channel.delete_options;
         let client = &self.matrix_client.appservice.client;
 
-        if let Some(prefix) = &delete_options.name_prefix {
-            if let Ok(state) = client
+        if let Some(prefix) = &delete_options.name_prefix
+            && let Ok(state) = client
                 .get_room_state_event(matrix_room_id, "m.room.name", "")
                 .await
-            {
-                if let Some(name) = state.get("name").and_then(|n| n.as_str()) {
-                    let new_name = format!("{}{}", prefix, name);
-                    let event_content = serde_json::json!({ "name": new_name });
-                    let _ = client
-                        .send_state_event(matrix_room_id, "m.room.name", "", &event_content)
-                        .await;
-                }
-            }
+            && let Some(name) = state.get("name").and_then(|n| n.as_str())
+        {
+            let new_name = format!("{}{}", prefix, name);
+            let event_content = serde_json::json!({ "name": new_name });
+            let _ = client
+                .send_state_event(matrix_room_id, "m.room.name", "", &event_content)
+                .await;
         }
 
-        if let Some(prefix) = &delete_options.topic_prefix {
-            if let Ok(state) = client
+        if let Some(prefix) = &delete_options.topic_prefix
+            && let Ok(state) = client
                 .get_room_state_event(matrix_room_id, "m.room.topic", "")
                 .await
-            {
-                if let Some(topic) = state.get("topic").and_then(|t| t.as_str()) {
-                    let new_topic = format!("{}{}", prefix, topic);
-                    let event_content = serde_json::json!({ "topic": new_topic });
-                    let _ = client
-                        .send_state_event(matrix_room_id, "m.room.topic", "", &event_content)
-                        .await;
-                }
-            }
+            && let Some(topic) = state.get("topic").and_then(|t| t.as_str())
+        {
+            let new_topic = format!("{}{}", prefix, topic);
+            let event_content = serde_json::json!({ "topic": new_topic });
+            let _ = client
+                .send_state_event(matrix_room_id, "m.room.topic", "", &event_content)
+                .await;
         }
 
         if delete_options.unset_room_alias {
@@ -1160,21 +1170,26 @@ impl BridgeCore {
         matrix_sender: &str,
     ) -> Result<()> {
         let content = outbound.render_content();
-        
-        let (username, avatar_url) = self.matrix_client
+
+        let (username, avatar_url) = self
+            .matrix_client
             .get_user_profile(matrix_sender)
             .await
             .unwrap_or(None)
             .unwrap_or_else(|| (matrix_sender.to_string(), None));
 
         let avatar_url_ref = avatar_url.as_deref();
-        let avatar_for_discord = avatar_url_ref.and_then(|url| {
+        let avatar_for_discord = avatar_url_ref.map(|url| {
             if url.starts_with("mxc://") {
                 let mxc_url = url.trim_start_matches("mxc://");
                 let homeserver = &self.matrix_client.config().bridge.homeserver_url;
-                Some(format!("{}/_matrix/media/r0/download/{}", homeserver.trim_end_matches('/'), mxc_url))
+                format!(
+                    "{}/_matrix/media/r0/download/{}",
+                    homeserver.trim_end_matches('/'),
+                    mxc_url
+                )
             } else {
-                Some(url.to_string())
+                url.to_string()
             }
         });
 
@@ -1189,7 +1204,7 @@ impl BridgeCore {
             content.len(),
             preview_text(&content)
         );
-        
+
         self.discord_client
             .send_message_with_metadata_as_user(
                 discord_channel_id,
@@ -1201,7 +1216,7 @@ impl BridgeCore {
                 avatar_for_discord.as_deref(),
             )
             .await?;
-        
+
         debug!(
             "discord message sent channel_id={} content_len={}",
             discord_channel_id,
@@ -1254,7 +1269,7 @@ impl BridgeCore {
         outbound: &OutboundMatrixMessage,
     ) -> Result<String> {
         let mut last_event_id: Option<String> = None;
-        
+
         for attachment_url in &outbound.attachments {
             match self.media_handler.download_from_url(attachment_url).await {
                 Ok(media) => {
@@ -1329,7 +1344,10 @@ impl BridgeCore {
                     }
                 }
                 Err(e) => {
-                    warn!("failed to download attachment from discord: {}, sending URL", e);
+                    warn!(
+                        "failed to download attachment from discord: {}, sending URL",
+                        e
+                    );
                     let body = format!("Attachment: {}", attachment_url);
                     last_event_id = Some(
                         self.matrix_client
@@ -1481,9 +1499,11 @@ impl BridgeCore {
         );
 
         let matrix_event_id = if !outbound.attachments.is_empty() {
-            self.send_to_matrix_with_attachments(&mapping.matrix_room_id, &ctx.sender_id, &outbound).await?
+            self.send_to_matrix_with_attachments(&mapping.matrix_room_id, &ctx.sender_id, &outbound)
+                .await?
         } else {
-            self.send_to_matrix_message(&mapping.matrix_room_id, &ctx.sender_id, outbound).await?
+            self.send_to_matrix_message(&mapping.matrix_room_id, &ctx.sender_id, outbound)
+                .await?
         };
 
         if let Some(source_message_id) = ctx.source_message_id {
@@ -1532,7 +1552,11 @@ impl BridgeCore {
         discord_channel_id: &str,
         discord_sender_id: &str,
     ) -> Result<()> {
-        let disable_typing_notifications = self.matrix_client.config().bridge.disable_typing_notifications;
+        let disable_typing_notifications = self
+            .matrix_client
+            .config()
+            .bridge
+            .disable_typing_notifications;
 
         let room_mapping = self
             .db_manager
@@ -1565,9 +1589,7 @@ impl BridgeCore {
 
         debug!(
             "discord typing forwarded channel_id={} sender={} mapped_room={}",
-            discord_channel_id,
-            discord_sender_id,
-            mapping.matrix_room_id
+            discord_channel_id, discord_sender_id, mapping.matrix_room_id
         );
 
         Ok(())
@@ -1663,16 +1685,20 @@ impl BridgeCore {
                         ctx.sender_id, ctx.channel_id
                     );
                     let result = match action {
-                        ModerationAction::Kick => self
-                            .matrix_client
-                            .kick_user_from_room(room_id, &matrix_user, Some(&reason))
-                            .await,
-                        ModerationAction::Ban => self
-                            .matrix_client
-                            .ban_user_from_room(room_id, &matrix_user, Some(&reason))
-                            .await,
+                        ModerationAction::Kick => {
+                            self.matrix_client
+                                .kick_user_from_room(room_id, &matrix_user, Some(&reason))
+                                .await
+                        }
+                        ModerationAction::Ban => {
+                            self.matrix_client
+                                .ban_user_from_room(room_id, &matrix_user, Some(&reason))
+                                .await
+                        }
                         ModerationAction::Unban => {
-                            self.matrix_client.unban_user_from_room(room_id, &matrix_user).await
+                            self.matrix_client
+                                .unban_user_from_room(room_id, &matrix_user)
+                                .await
                         }
                     };
 
@@ -1685,8 +1711,7 @@ impl BridgeCore {
                                 matrix_user,
                                 ctx.sender_id
                             );
-                            if let Err(err) =
-                                self.matrix_client.send_notice(room_id, &notice).await
+                            if let Err(err) = self.matrix_client.send_notice(room_id, &notice).await
                             {
                                 warn!(
                                     "failed to send moderation notice to room {}: {}",
@@ -1708,9 +1733,7 @@ impl BridgeCore {
                 }
 
                 let reply = if failed_count == 0 {
-                    format!(
-                        "{action_word} {matrix_user} in {success_count} bridged room(s)."
-                    )
+                    format!("{action_word} {matrix_user} in {success_count} bridged room(s).")
                 } else {
                     format!(
                         "{action_word} {matrix_user} in {success_count} room(s), failed in {failed_count} room(s)."
@@ -1740,9 +1763,17 @@ impl BridgeCore {
                         .await?;
                 }
             }
-            DiscordCommandOutcome::BridgeRequested { guild_id, channel_id } => {
+            DiscordCommandOutcome::BridgeRequested {
+                guild_id,
+                channel_id,
+            } => {
                 let reply = self
-                    .request_bridge_discord_channel(&ctx.channel_id, &ctx.sender_id, &guild_id, &channel_id)
+                    .request_bridge_discord_channel(
+                        &ctx.channel_id,
+                        &ctx.sender_id,
+                        &guild_id,
+                        &channel_id,
+                    )
                     .await?;
                 self.discord_client
                     .send_message(&ctx.channel_id, &reply)
@@ -1754,8 +1785,8 @@ impl BridgeCore {
 
     async fn request_bridge_discord_channel(
         &self,
-        discord_channel_id: &str,
-        requestor_id: &str,
+        _discord_channel_id: &str,
+        _requestor_id: &str,
         guild_id: &str,
         channel_id: &str,
     ) -> Result<String> {
@@ -1773,11 +1804,15 @@ impl BridgeCore {
             return Ok("Could not find the specified Discord channel.".to_string());
         };
 
-        let matrix_room_id = match self.matrix_client.create_room(
-            &channel.id,
-            &format!("[Discord] #{}", channel.name),
-            channel.topic.as_deref(),
-        ).await {
+        let matrix_room_id = match self
+            .matrix_client
+            .create_room(
+                &channel.id,
+                &format!("[Discord] #{}", channel.name),
+                channel.topic.as_deref(),
+            )
+            .await
+        {
             Ok(room_id) => room_id,
             Err(e) => {
                 warn!("failed to create matrix room for bridge: {}", e);
@@ -1794,14 +1829,20 @@ impl BridgeCore {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
-        
+
         self.db_manager
             .room_store()
             .create_room_mapping(&mapping)
             .await?;
 
-        info!("created bridge from discord channel {} to matrix room {}", channel.id, matrix_room_id);
-        Ok(format!("Successfully bridged to Matrix room: {}", matrix_room_id))
+        info!(
+            "created bridge from discord channel {} to matrix room {}",
+            channel.id, matrix_room_id
+        );
+        Ok(format!(
+            "Successfully bridged to Matrix room: {}",
+            matrix_room_id
+        ))
     }
 
     pub async fn handle_discord_message(
@@ -1840,7 +1881,10 @@ impl BridgeCore {
             .await?;
 
         let Some(mapping) = room_mapping else {
-            debug!("ignoring channel update for unmapped channel {}", discord_channel_id);
+            debug!(
+                "ignoring channel update for unmapped channel {}",
+                discord_channel_id
+            );
             return Ok(());
         };
 
@@ -1853,22 +1897,38 @@ impl BridgeCore {
             ],
         );
 
-        let current_name = self.matrix_client.get_room_name(&mapping.matrix_room_id).await?;
+        let current_name = self
+            .matrix_client
+            .get_room_name(&mapping.matrix_room_id)
+            .await?;
         if current_name.as_deref() != Some(&formatted_name) {
-            self.matrix_client.set_room_name(&mapping.matrix_room_id, &formatted_name).await?;
-            
+            self.matrix_client
+                .set_room_name(&mapping.matrix_room_id, &formatted_name)
+                .await?;
+
             let mut updated = mapping.clone();
             updated.discord_channel_name = new_name.to_string();
             updated.updated_at = chrono::Utc::now();
-            self.db_manager.room_store().update_room_mapping(&updated).await?;
-            
-            info!("updated room name for channel {} to {}", discord_channel_id, formatted_name);
+            self.db_manager
+                .room_store()
+                .update_room_mapping(&updated)
+                .await?;
+
+            info!(
+                "updated room name for channel {} to {}",
+                discord_channel_id, formatted_name
+            );
         }
 
         if let Some(topic) = new_topic {
-            let current_topic = self.matrix_client.get_room_topic(&mapping.matrix_room_id).await?;
+            let current_topic = self
+                .matrix_client
+                .get_room_topic(&mapping.matrix_room_id)
+                .await?;
             if current_topic.as_deref() != Some(topic) {
-                self.matrix_client.set_room_topic(&mapping.matrix_room_id, topic).await?;
+                self.matrix_client
+                    .set_room_topic(&mapping.matrix_room_id, topic)
+                    .await?;
                 info!("updated room topic for channel {}", discord_channel_id);
             }
         }
@@ -1876,10 +1936,7 @@ impl BridgeCore {
         Ok(())
     }
 
-    pub async fn handle_discord_channel_delete(
-        &self,
-        discord_channel_id: &str,
-    ) -> Result<()> {
+    pub async fn handle_discord_channel_delete(&self, discord_channel_id: &str) -> Result<()> {
         let room_mapping = self
             .db_manager
             .room_store()
@@ -1887,41 +1944,40 @@ impl BridgeCore {
             .await?;
 
         let Some(mapping) = room_mapping else {
-            debug!("ignoring channel delete for unmapped channel {}", discord_channel_id);
+            debug!(
+                "ignoring channel delete for unmapped channel {}",
+                discord_channel_id
+            );
             return Ok(());
         };
 
         let delete_options = &self.matrix_client.config().channel.delete_options;
         let client = &self.matrix_client.appservice.client;
 
-        if let Some(prefix) = &delete_options.name_prefix {
-            if let Ok(state) = client
+        if let Some(prefix) = &delete_options.name_prefix
+            && let Ok(state) = client
                 .get_room_state_event(&mapping.matrix_room_id, "m.room.name", "")
                 .await
-            {
-                if let Some(name) = state.get("name").and_then(|n| n.as_str()) {
-                    let new_name = format!("{}{}", prefix, name);
-                    let event_content = serde_json::json!({ "name": new_name });
-                    let _ = client
-                        .send_state_event(&mapping.matrix_room_id, "m.room.name", "", &event_content)
-                        .await;
-                }
-            }
+            && let Some(name) = state.get("name").and_then(|n| n.as_str())
+        {
+            let new_name = format!("{}{}", prefix, name);
+            let event_content = serde_json::json!({ "name": new_name });
+            let _ = client
+                .send_state_event(&mapping.matrix_room_id, "m.room.name", "", &event_content)
+                .await;
         }
 
-        if let Some(prefix) = &delete_options.topic_prefix {
-            if let Ok(state) = client
+        if let Some(prefix) = &delete_options.topic_prefix
+            && let Ok(state) = client
                 .get_room_state_event(&mapping.matrix_room_id, "m.room.topic", "")
                 .await
-            {
-                if let Some(topic) = state.get("topic").and_then(|t| t.as_str()) {
-                    let new_topic = format!("{}{}", prefix, topic);
-                    let event_content = serde_json::json!({ "topic": new_topic });
-                    let _ = client
-                        .send_state_event(&mapping.matrix_room_id, "m.room.topic", "", &event_content)
-                        .await;
-                }
-            }
+            && let Some(topic) = state.get("topic").and_then(|t| t.as_str())
+        {
+            let new_topic = format!("{}{}", prefix, topic);
+            let event_content = serde_json::json!({ "topic": new_topic });
+            let _ = client
+                .send_state_event(&mapping.matrix_room_id, "m.room.topic", "", &event_content)
+                .await;
         }
 
         self.db_manager
@@ -1931,7 +1987,10 @@ impl BridgeCore {
 
         self.room_cache.remove(&mapping.matrix_room_id).await;
 
-        info!("removed room mapping for deleted channel {}", discord_channel_id);
+        info!(
+            "removed room mapping for deleted channel {}",
+            discord_channel_id
+        );
         Ok(())
     }
 
@@ -1943,7 +2002,10 @@ impl BridgeCore {
     ) -> Result<()> {
         // Future: Update all bridged rooms with new guild info
         // For now, we just log the event
-        debug!("guild update event received, guild_id={}", _discord_guild_id);
+        debug!(
+            "guild update event received, guild_id={}",
+            _discord_guild_id
+        );
         Ok(())
     }
 
@@ -1968,9 +2030,15 @@ impl BridgeCore {
         updated.discord_username = new_username.to_string();
         updated.discord_avatar = new_avatar_url.map(ToOwned::to_owned);
         updated.updated_at = chrono::Utc::now();
-        self.db_manager.user_store().update_user_mapping(&updated).await?;
+        self.db_manager
+            .user_store()
+            .update_user_mapping(&updated)
+            .await?;
 
-        info!("updated user mapping for {} with new username {}", discord_user_id, new_username);
+        info!(
+            "updated user mapping for {} with new username {}",
+            discord_user_id, new_username
+        );
         Ok(())
     }
 
@@ -1989,7 +2057,10 @@ impl BridgeCore {
             .await?;
 
         let Some(mapping) = user_mapping else {
-            debug!("ignoring guild member update for unmapped user {}", discord_user_id);
+            debug!(
+                "ignoring guild member update for unmapped user {}",
+                discord_user_id
+            );
             return Ok(());
         };
 
@@ -1998,7 +2069,10 @@ impl BridgeCore {
             updated.discord_avatar = new_avatar_url.map(ToOwned::to_owned);
         }
         updated.updated_at = chrono::Utc::now();
-        self.db_manager.user_store().update_user_mapping(&updated).await?;
+        self.db_manager
+            .user_store()
+            .update_user_mapping(&updated)
+            .await?;
 
         let room_mappings = self
             .db_manager
@@ -2018,14 +2092,14 @@ impl BridgeCore {
             }
         }
 
-        info!("updated user mapping for {} in guild {} with new nick {}", discord_user_id, discord_guild_id, new_nick);
+        info!(
+            "updated user mapping for {} in guild {} with new nick {}",
+            discord_user_id, discord_guild_id, new_nick
+        );
         Ok(())
     }
 
-    pub async fn handle_discord_guild_delete(
-        &self,
-        discord_guild_id: &str,
-    ) -> Result<()> {
+    pub async fn handle_discord_guild_delete(&self, discord_guild_id: &str) -> Result<()> {
         let room_mappings = self
             .db_manager
             .room_store()
@@ -2038,12 +2112,22 @@ impl BridgeCore {
             .collect();
 
         for mapping in &affected_rooms {
-            if let Err(err) = self.handle_discord_channel_delete(&mapping.discord_channel_id).await {
-                warn!("failed to clean up room mapping for guild {}: {}", discord_guild_id, err);
+            if let Err(err) = self
+                .handle_discord_channel_delete(&mapping.discord_channel_id)
+                .await
+            {
+                warn!(
+                    "failed to clean up room mapping for guild {}: {}",
+                    discord_guild_id, err
+                );
             }
         }
 
-        info!("cleaned up {} room mappings for deleted guild {}", affected_rooms.len(), discord_guild_id);
+        info!(
+            "cleaned up {} room mappings for deleted guild {}",
+            affected_rooms.len(),
+            discord_guild_id
+        );
         Ok(())
     }
 
@@ -2052,7 +2136,7 @@ impl BridgeCore {
         discord_guild_id: &str,
         discord_user_id: &str,
         display_name: &str,
-        avatar_url: Option<&str>,
+        _avatar_url: Option<&str>,
         roles: &[String],
     ) -> Result<()> {
         debug!(
@@ -2072,7 +2156,10 @@ impl BridgeCore {
             .collect();
 
         if guild_rooms.is_empty() {
-            debug!("no rooms mapped for guild {}, skipping member add", discord_guild_id);
+            debug!(
+                "no rooms mapped for guild {}, skipping member add",
+                discord_guild_id
+            );
             return Ok(());
         }
 
@@ -2081,14 +2168,23 @@ impl BridgeCore {
             .await?;
 
         for mapping in guild_rooms {
-            if !self.matrix_client.config().bridge.disable_join_leave_notifications {
+            if !self
+                .matrix_client
+                .config()
+                .bridge
+                .disable_join_leave_notifications
+            {
                 let ghost_user_id = format!(
                     "@_discord_{}:{}",
                     discord_user_id,
                     self.matrix_client.config().bridge.domain
                 );
 
-                match self.matrix_client.invite_user_to_room(&mapping.matrix_room_id, &ghost_user_id).await {
+                match self
+                    .matrix_client
+                    .invite_user_to_room(&mapping.matrix_room_id, &ghost_user_id)
+                    .await
+                {
                     Ok(_) => {
                         info!(
                             "invited ghost user {} to room {} for guild member add",
@@ -2141,19 +2237,35 @@ impl BridgeCore {
             .collect();
 
         if guild_rooms.is_empty() {
-            debug!("no rooms mapped for guild {}, skipping member remove", discord_guild_id);
+            debug!(
+                "no rooms mapped for guild {}, skipping member remove",
+                discord_guild_id
+            );
             return Ok(());
         }
 
         for mapping in guild_rooms {
-            if !self.matrix_client.config().bridge.disable_join_leave_notifications {
+            if !self
+                .matrix_client
+                .config()
+                .bridge
+                .disable_join_leave_notifications
+            {
                 let ghost_user_id = format!(
                     "@_discord_{}:{}",
                     discord_user_id,
                     self.matrix_client.config().bridge.domain
                 );
 
-                match self.matrix_client.kick_user_from_room(&mapping.matrix_room_id, &ghost_user_id, Some("Left Discord server")).await {
+                match self
+                    .matrix_client
+                    .kick_user_from_room(
+                        &mapping.matrix_room_id,
+                        &ghost_user_id,
+                        Some("Left Discord server"),
+                    )
+                    .await
+                {
                     Ok(_) => {
                         info!(
                             "kicked ghost user {} from room {} for guild member remove",

@@ -133,11 +133,11 @@ impl MessageFlow {
     ) -> Self {
         let domain = matrix_client.config().bridge.domain.clone();
         let mut converter = DiscordToMatrixConverter::new(discord_client).with_domain(domain);
-        
+
         if let Some(handler) = emoji_handler {
             converter = converter.with_emoji_handler(handler);
         }
-        
+
         Self {
             matrix_converter: Arc::new(MatrixToDiscordConverter::new(matrix_client)),
             discord_converter: Arc::new(converter),
@@ -257,9 +257,15 @@ impl MessageFlow {
         }
     }
 
-    pub async fn discord_to_matrix_async(&self, message: &DiscordInboundMessage) -> (String, Option<String>) {
+    pub async fn discord_to_matrix_async(
+        &self,
+        message: &DiscordInboundMessage,
+    ) -> (String, Option<String>) {
         let plain = self.discord_converter.format_for_matrix(&message.content);
-        let formatted = self.discord_converter.format_as_html_async(&message.content).await;
+        let formatted = self
+            .discord_converter
+            .format_as_html_async(&message.content)
+            .await;
         (plain, Some(formatted))
     }
 
@@ -321,8 +327,8 @@ mod tests {
     use super::{DiscordInboundMessage, MessageFlow, MessageRelation};
     use crate::config::{
         AuthConfig, BridgeConfig, ChannelConfig, ChannelDeleteOptionsConfig, Config,
-        DatabaseConfig, GhostsConfig, LimitsConfig, LoggingConfig, MetricsConfig, RegistrationConfig,
-        RoomConfig,
+        DatabaseConfig, GhostsConfig, LimitsConfig, LoggingConfig, MetricsConfig,
+        RegistrationConfig, RoomConfig,
     };
     use crate::discord::DiscordClient;
     use crate::matrix::{MatrixAppservice, MatrixEvent};

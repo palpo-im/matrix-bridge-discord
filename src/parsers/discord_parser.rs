@@ -3,12 +3,11 @@ use std::sync::Arc;
 use anyhow::Result;
 use chrono::Utc;
 use regex::Regex;
-use serde_json::{json, Value};
-
-use crate::discord::DiscordClient;
-use crate::emoji::EmojiHandler;
+use serde_json::{Value, json};
 
 use super::common::{BridgeMessage, EmojiMention, MessageUtils, ParsedMessage};
+use crate::discord::DiscordClient;
+use crate::emoji::EmojiHandler;
 
 pub struct DiscordMessageParser {
     _client: Arc<DiscordClient>,
@@ -93,23 +92,23 @@ impl DiscordToMatrixConverter {
 
     pub fn format_as_html(&self, message: &str) -> String {
         let mut result = message.to_string();
-        
+
         result = self.escape_html(&result);
-        
+
         result = self.convert_code_blocks_to_html(&result);
         result = self.convert_inline_code_to_html(&result);
-        
+
         result = self.convert_discord_formatting_to_html(&result);
-        
+
         result = self.convert_mentions_to_html(&result);
         result = self.convert_channels_to_html(&result);
         result = self.convert_roles_to_html(&result);
         result = self.convert_emojis_to_html(&result);
-        
+
         result = self.convert_everyone_here_to_html(&result);
-        
+
         result = self.convert_newlines_to_html(&result);
-        
+
         result
     }
 
@@ -127,7 +126,10 @@ impl DiscordToMatrixConverter {
                 if lang.is_empty() {
                     format!("<pre><code>{}</code></pre>", code)
                 } else {
-                    format!("<pre><code class=\"language-{}\">{}</code></pre>", lang, code)
+                    format!(
+                        "<pre><code class=\"language-{}\">{}</code></pre>",
+                        lang, code
+                    )
                 }
             })
             .to_string()
@@ -149,7 +151,10 @@ impl DiscordToMatrixConverter {
                 if lang.is_empty() {
                     format!("<pre><code>{}</code></pre>", code)
                 } else {
-                    format!("<pre><code class=\"language-{}\">{}</code></pre>", lang, code)
+                    format!(
+                        "<pre><code class=\"language-{}\">{}</code></pre>",
+                        lang, code
+                    )
                 }
             })
             .to_string()
@@ -165,27 +170,32 @@ impl DiscordToMatrixConverter {
 
     fn convert_discord_formatting_to_html(&self, text: &str) -> String {
         let mut result = text.to_string();
-        
-        result = self.bold_regex
+
+        result = self
+            .bold_regex
             .replace_all(&result, "<strong>$1</strong>")
             .to_string();
-        
-        result = self.italic_regex
+
+        result = self
+            .italic_regex
             .replace_all(&result, "<em>$1</em>")
             .to_string();
-        
-        result = self.underline_regex
+
+        result = self
+            .underline_regex
             .replace_all(&result, "<u>$1</u>")
             .to_string();
-        
-        result = self.strikethrough_regex
+
+        result = self
+            .strikethrough_regex
             .replace_all(&result, "<del>$1</del>")
             .to_string();
-        
-        result = self.spoiler_regex
+
+        result = self
+            .spoiler_regex
             .replace_all(&result, "<span data-mx-spoiler>$1</span>")
             .to_string();
-        
+
         result
     }
 
@@ -196,8 +206,10 @@ impl DiscordToMatrixConverter {
         self.mention_regex
             .replace_all(text, |caps: &regex::Captures| {
                 let user_id = &caps[1];
-                format!("<a href=\"https://matrix.to/#/@_discord_{}:{}\">@_discord_{}</a>", 
-                    user_id, self.domain, user_id)
+                format!(
+                    "<a href=\"https://matrix.to/#/@_discord_{}:{}\">@_discord_{}</a>",
+                    user_id, self.domain, user_id
+                )
             })
             .to_string()
     }
@@ -209,8 +221,10 @@ impl DiscordToMatrixConverter {
         self.mention_regex
             .replace_all(text, |caps: &regex::Captures| {
                 let user_id = &caps[1];
-                format!("<a href=\"https://matrix.to/#/@_discord_{}:{}\">@_discord_{}</a>", 
-                    user_id, self.domain, user_id)
+                format!(
+                    "<a href=\"https://matrix.to/#/@_discord_{}:{}\">@_discord_{}</a>",
+                    user_id, self.domain, user_id
+                )
             })
             .to_string()
     }
@@ -222,8 +236,10 @@ impl DiscordToMatrixConverter {
         self.channel_regex
             .replace_all(text, |caps: &regex::Captures| {
                 let channel_id = &caps[1];
-                format!("<a href=\"https://matrix.to/#/#_discord_{}:{}\">#_discord_{}</a>", 
-                    channel_id, self.domain, channel_id)
+                format!(
+                    "<a href=\"https://matrix.to/#/#_discord_{}:{}\">#_discord_{}</a>",
+                    channel_id, self.domain, channel_id
+                )
             })
             .to_string()
     }
@@ -235,8 +251,10 @@ impl DiscordToMatrixConverter {
         self.channel_regex
             .replace_all(text, |caps: &regex::Captures| {
                 let channel_id = &caps[1];
-                format!("<a href=\"https://matrix.to/#/#_discord_{}:{}\">#_discord_{}</a>", 
-                    channel_id, self.domain, channel_id)
+                format!(
+                    "<a href=\"https://matrix.to/#/#_discord_{}:{}\">#_discord_{}</a>",
+                    channel_id, self.domain, channel_id
+                )
             })
             .to_string()
     }
@@ -267,27 +285,29 @@ impl DiscordToMatrixConverter {
 
     fn convert_emojis_to_matrix(&self, text: &str) -> String {
         let mut result = text.to_string();
-        
-        result = self.animated_emoji_regex
+
+        result = self
+            .animated_emoji_regex
             .replace_all(&result, |caps: &regex::Captures| {
                 let emoji_name = &caps[1];
                 format!(":{}:", emoji_name)
             })
             .to_string();
-        
-        result = self.emoji_regex
+
+        result = self
+            .emoji_regex
             .replace_all(&result, |caps: &regex::Captures| {
                 let emoji_name = &caps[1];
                 format!(":{}:", emoji_name)
             })
             .to_string();
-        
+
         result
     }
 
     fn convert_emojis_to_html(&self, text: &str) -> String {
         let mut result = text.to_string();
-        
+
         result = self.animated_emoji_regex
             .replace_all(&result, |caps: &regex::Captures| {
                 let emoji_name = &caps[1];
@@ -296,7 +316,7 @@ impl DiscordToMatrixConverter {
                     emoji_id, emoji_name, emoji_name)
             })
             .to_string();
-        
+
         result = self.emoji_regex
             .replace_all(&result, |caps: &regex::Captures| {
                 let emoji_name = &caps[1];
@@ -305,7 +325,7 @@ impl DiscordToMatrixConverter {
                     emoji_id, emoji_name, emoji_name)
             })
             .to_string();
-        
+
         result
     }
 
@@ -316,13 +336,15 @@ impl DiscordToMatrixConverter {
 
         let mut result = text.to_string();
 
-        result = self.animated_emoji_regex
+        result = self
+            .animated_emoji_regex
             .replace_all(&result, |caps: &regex::Captures| {
                 format!("__ANIMATED_EMOJI_{}__", &caps[2])
             })
             .to_string();
 
-        result = self.emoji_regex
+        result = self
+            .emoji_regex
             .replace_all(&result, |caps: &regex::Captures| {
                 format!("__STATIC_EMOJI_{}__", &caps[2])
             })
@@ -343,13 +365,21 @@ impl DiscordToMatrixConverter {
                 format!("__STATIC_EMOJI_{}__", emoji_id)
             };
 
-            match handler.get_or_upload_emoji(&emoji_id, &emoji_name, animated).await {
+            match handler
+                .get_or_upload_emoji(&emoji_id, &emoji_name, animated)
+                .await
+            {
                 Ok(mxc_url) => {
                     let html = handler.emoji_to_matrix_html(&mxc_url, &emoji_name);
                     result = result.replace(&placeholder, &html);
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to upload emoji {} ({}): {}", emoji_name, emoji_id, e);
+                    tracing::warn!(
+                        "Failed to upload emoji {} ({}): {}",
+                        emoji_name,
+                        emoji_id,
+                        e
+                    );
                     let ext = if animated { "gif" } else { "png" };
                     let fallback = format!(
                         "<img data-mx-emoticon src=\"https://cdn.discordapp.com/emojis/{}.{}\" alt=\":{}:\" title=\":{}:\" height=\"32\" width=\"32\" />",
@@ -365,37 +395,46 @@ impl DiscordToMatrixConverter {
 
     pub async fn format_as_html_async(&self, message: &str) -> String {
         let mut result = message.to_string();
-        
+
         result = self.escape_html(&result);
-        
+
         result = self.convert_code_blocks_to_html(&result);
         result = self.convert_inline_code_to_html(&result);
-        
+
         result = self.convert_discord_formatting_to_html(&result);
-        
+
         result = self.convert_mentions_to_html(&result);
         result = self.convert_channels_to_html(&result);
         result = self.convert_roles_to_html(&result);
         result = self.convert_emojis_to_html_with_cache(&result).await;
-        
+
         result = self.convert_everyone_here_to_html(&result);
-        
+
         result = self.convert_newlines_to_html(&result);
-        
+
         result
     }
 
     fn convert_everyone_here(&self, text: &str) -> String {
         let mut result = text.to_string();
-        result = self.everyone_regex.replace_all(&result, "@everyone").to_string();
+        result = self
+            .everyone_regex
+            .replace_all(&result, "@everyone")
+            .to_string();
         result = self.here_regex.replace_all(&result, "@here").to_string();
         result
     }
 
     fn convert_everyone_here_to_html(&self, text: &str) -> String {
         let mut result = text.to_string();
-        result = self.everyone_regex.replace_all(&result, "<font color=\"#FF0000\">@everyone</font>").to_string();
-        result = self.here_regex.replace_all(&result, "<font color=\"#FF0000\">@here</font>").to_string();
+        result = self
+            .everyone_regex
+            .replace_all(&result, "<font color=\"#FF0000\">@everyone</font>")
+            .to_string();
+        result = self
+            .here_regex
+            .replace_all(&result, "<font color=\"#FF0000\">@here</font>")
+            .to_string();
         result
     }
 
@@ -409,7 +448,7 @@ impl DiscordToMatrixConverter {
         matrix_room_id: &str,
     ) -> Result<BridgeMessage> {
         let formatted = self.format_as_html_async(discord_message).await;
-        
+
         Ok(BridgeMessage {
             source_platform: "discord".to_string(),
             target_platform: "matrix".to_string(),
@@ -429,7 +468,7 @@ impl DiscordToMatrixConverter {
     ) -> Result<BridgeMessage> {
         let formatted = self.format_as_html_async(discord_message).await;
         let plain = self.format_for_matrix(discord_message);
-        
+
         Ok(BridgeMessage {
             source_platform: "discord".to_string(),
             target_platform: "matrix".to_string(),
@@ -458,14 +497,20 @@ impl DiscordToMatrixConverter {
         }
     }
 
-    pub fn create_reply_content(&self, body: &str, reply_event_id: &str, reply_body: &str, reply_sender: &str) -> Value {
+    pub fn create_reply_content(
+        &self,
+        body: &str,
+        reply_event_id: &str,
+        reply_body: &str,
+        reply_sender: &str,
+    ) -> Value {
         let formatted_reply = format!(
             "<mx-reply><blockquote><a href=\"https://matrix.to/#/{}\">In reply to</a> <a href=\"https://matrix.to/#/{}\">{}</a><br/>{}</blockquote></mx-reply>{}",
             reply_event_id, reply_sender, reply_sender, reply_body, body
         );
-        
+
         let plain_reply = format!("> <{}> {}\n\n{}", reply_sender, reply_body, body);
-        
+
         json!({
             "msgtype": "m.text",
             "body": plain_reply,
@@ -479,7 +524,12 @@ impl DiscordToMatrixConverter {
         })
     }
 
-    pub fn create_edit_content(&self, new_body: &str, original_event_id: &str, new_formatted_body: Option<&str>) -> Value {
+    pub fn create_edit_content(
+        &self,
+        new_body: &str,
+        original_event_id: &str,
+        new_formatted_body: Option<&str>,
+    ) -> Value {
         let new_content = if let Some(formatted) = new_formatted_body {
             json!({
                 "msgtype": "m.text",
@@ -527,82 +577,80 @@ mod tests {
     fn make_converter() -> DiscordToMatrixConverter {
         tokio_test::block_on(async {
             DiscordToMatrixConverter::new(Arc::new(
-                crate::discord::DiscordClient::new(std::sync::Arc::new(
-                    crate::config::Config {
-                        bridge: crate::config::BridgeConfig {
-                            domain: "example.org".to_string(),
-                            port: 9005,
-                            bind_address: "127.0.0.1".to_string(),
-                            homeserver_url: "http://localhost:8008".to_string(),
-                            presence_interval: 500,
-                            disable_presence: false,
-                            disable_typing_notifications: false,
-                            disable_discord_mentions: false,
-                            disable_deletion_forwarding: false,
-                            enable_self_service_bridging: false,
-                            disable_portal_bridging: false,
-                            disable_read_receipts: false,
-                            disable_everyone_mention: false,
-                            disable_here_mention: false,
-                            disable_join_leave_notifications: false,
-                            disable_invite_notifications: false,
-                            disable_room_topic_notifications: false,
-                            determine_code_language: false,
-                            user_limit: None,
-                            admin_mxid: None,
-                            invalid_token_message: String::new(),
-                            user_activity: None,
-                        },
-                        registration: crate::config::RegistrationConfig::default(),
-                        auth: crate::config::AuthConfig {
-                            bot_token: "test".to_string(),
-                            client_id: None,
-                            client_secret: None,
-                            use_privileged_intents: false,
-                        },
-                        logging: crate::config::LoggingConfig {
-                            level: "info".to_string(),
-                            line_date_format: String::new(),
-                            format: "pretty".to_string(),
-                            file: None,
-                            files: vec![],
-                        },
-                        database: crate::config::DatabaseConfig {
-                            url: Some("sqlite://test.db".to_string()),
-                            conn_string: None,
-                            filename: None,
-                            user_store_path: None,
-                            room_store_path: None,
-                            max_connections: None,
-                            min_connections: None,
-                        },
-                        room: crate::config::RoomConfig {
-                            default_visibility: "private".to_string(),
-                            room_alias_prefix: "_discord".to_string(),
-                            enable_room_creation: true,
-                            kick_for: 0,
-                        },
-                        channel: crate::config::ChannelConfig {
-                            enable_channel_creation: false,
-                            channel_name_format: String::new(),
-                            name_pattern: String::new(),
-                            topic_format: String::new(),
-                            delete_options: crate::config::ChannelDeleteOptionsConfig::default(),
-                            enable_webhook: true,
-                            webhook_name: "_matrix".to_string(),
-                            webhook_avatar: String::new(),
-                        },
-                        limits: crate::config::LimitsConfig::default(),
-                        ghosts: crate::config::GhostsConfig {
-                            nick_pattern: String::new(),
-                            username_pattern: String::new(),
-                            username_template: String::new(),
-                            displayname_template: String::new(),
-                            avatar_url_template: None,
-                        },
-                        metrics: crate::config::MetricsConfig::default(),
+                crate::discord::DiscordClient::new(std::sync::Arc::new(crate::config::Config {
+                    bridge: crate::config::BridgeConfig {
+                        domain: "example.org".to_string(),
+                        port: 9005,
+                        bind_address: "127.0.0.1".to_string(),
+                        homeserver_url: "http://localhost:8008".to_string(),
+                        presence_interval: 500,
+                        disable_presence: false,
+                        disable_typing_notifications: false,
+                        disable_discord_mentions: false,
+                        disable_deletion_forwarding: false,
+                        enable_self_service_bridging: false,
+                        disable_portal_bridging: false,
+                        disable_read_receipts: false,
+                        disable_everyone_mention: false,
+                        disable_here_mention: false,
+                        disable_join_leave_notifications: false,
+                        disable_invite_notifications: false,
+                        disable_room_topic_notifications: false,
+                        determine_code_language: false,
+                        user_limit: None,
+                        admin_mxid: None,
+                        invalid_token_message: String::new(),
+                        user_activity: None,
                     },
-                ))
+                    registration: crate::config::RegistrationConfig::default(),
+                    auth: crate::config::AuthConfig {
+                        bot_token: "test".to_string(),
+                        client_id: None,
+                        client_secret: None,
+                        use_privileged_intents: false,
+                    },
+                    logging: crate::config::LoggingConfig {
+                        level: "info".to_string(),
+                        line_date_format: String::new(),
+                        format: "pretty".to_string(),
+                        file: None,
+                        files: vec![],
+                    },
+                    database: crate::config::DatabaseConfig {
+                        url: Some("sqlite://test.db".to_string()),
+                        conn_string: None,
+                        filename: None,
+                        user_store_path: None,
+                        room_store_path: None,
+                        max_connections: None,
+                        min_connections: None,
+                    },
+                    room: crate::config::RoomConfig {
+                        default_visibility: "private".to_string(),
+                        room_alias_prefix: "_discord".to_string(),
+                        enable_room_creation: true,
+                        kick_for: 0,
+                    },
+                    channel: crate::config::ChannelConfig {
+                        enable_channel_creation: false,
+                        channel_name_format: String::new(),
+                        name_pattern: String::new(),
+                        topic_format: String::new(),
+                        delete_options: crate::config::ChannelDeleteOptionsConfig::default(),
+                        enable_webhook: true,
+                        webhook_name: "_matrix".to_string(),
+                        webhook_avatar: String::new(),
+                    },
+                    limits: crate::config::LimitsConfig::default(),
+                    ghosts: crate::config::GhostsConfig {
+                        nick_pattern: String::new(),
+                        username_pattern: String::new(),
+                        username_template: String::new(),
+                        displayname_template: String::new(),
+                        avatar_url_template: None,
+                    },
+                    metrics: crate::config::MetricsConfig::default(),
+                }))
                 .await
                 .unwrap(),
             ))

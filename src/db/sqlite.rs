@@ -1,15 +1,15 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
-use std::sync::Arc;
 
-use crate::db::schema_sqlite::{message_mappings, room_mappings, user_mappings};
-
-use super::{
-    DatabaseError,
-    models::{EmojiMapping, MessageMapping, RemoteRoomInfo, RemoteUserInfo, RoomMapping, UserMapping},
+use super::DatabaseError;
+use super::models::{
+    EmojiMapping, MessageMapping, RemoteRoomInfo, RemoteUserInfo, RoomMapping, UserMapping,
 };
+use crate::db::schema_sqlite::{message_mappings, room_mappings, user_mappings};
 
 // Helper function to convert DateTime to ISO string for SQLite
 fn datetime_to_string(dt: &DateTime<Utc>) -> String {
@@ -163,8 +163,7 @@ struct UpdateMessageMapping<'a> {
 }
 
 fn establish_connection(path: &str) -> Result<SqliteConnection, DatabaseError> {
-    SqliteConnection::establish(path)
-        .map_err(|e| DatabaseError::Connection(e.to_string()))
+    SqliteConnection::establish(path).map_err(|e| DatabaseError::Connection(e.to_string()))
 }
 
 pub struct SqliteRoomStore {
@@ -340,10 +339,7 @@ impl super::RoomStore for SqliteRoomStore {
         .map_err(|e| DatabaseError::Query(format!("database task failed: {e}")))?
     }
 
-    async fn get_rooms_by_guild(
-        &self,
-        guild_id: &str,
-    ) -> Result<Vec<RoomMapping>, DatabaseError> {
+    async fn get_rooms_by_guild(&self, guild_id: &str) -> Result<Vec<RoomMapping>, DatabaseError> {
         let guild_id = guild_id.to_string();
         let db_path = self.db_path.clone();
         tokio::task::spawn_blocking(move || {
@@ -722,10 +718,7 @@ impl super::EmojiStore for SqliteEmojiStore {
         .map_err(|e| DatabaseError::Query(format!("database task failed: {e}")))?
     }
 
-    async fn get_emoji_by_mxc(
-        &self,
-        mxc_url: &str,
-    ) -> Result<Option<EmojiMapping>, DatabaseError> {
+    async fn get_emoji_by_mxc(&self, mxc_url: &str) -> Result<Option<EmojiMapping>, DatabaseError> {
         let mxc_url = mxc_url.to_string();
         let db_path = self.db_path.clone();
         tokio::task::spawn_blocking(move || {

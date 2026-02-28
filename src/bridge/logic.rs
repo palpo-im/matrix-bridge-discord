@@ -1,7 +1,6 @@
+use super::message_flow::OutboundMatrixMessage;
 use crate::db::{MessageMapping, RoomMapping};
 use crate::discord::ModerationAction;
-
-use super::message_flow::OutboundMatrixMessage;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RedactionRequest {
@@ -91,12 +90,12 @@ mod tests {
     use chrono::Utc;
 
     use super::{
-        action_keyword, apply_message_relation_mappings, build_discord_delete_redaction_request,
-        build_discord_typing_request, discord_delete_redaction_request,
-        preview_text, should_forward_discord_typing, OutboundMatrixMessage,
+        OutboundMatrixMessage, action_keyword, apply_message_relation_mappings,
+        build_discord_delete_redaction_request, build_discord_typing_request,
+        discord_delete_redaction_request, preview_text, should_forward_discord_typing,
     };
-    use crate::discord::ModerationAction;
     use crate::db::{MessageMapping, RoomMapping};
+    use crate::discord::ModerationAction;
 
     fn mapping(discord_message_id: &str, matrix_event_id: &str) -> MessageMapping {
         MessageMapping {

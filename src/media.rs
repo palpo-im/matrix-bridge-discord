@@ -1,7 +1,8 @@
-use anyhow::{anyhow, Result};
-use tracing::{debug, warn};
-use reqwest::Client;
 use std::path::Path;
+
+use anyhow::{Result, anyhow};
+use reqwest::Client;
+use tracing::{debug, warn};
 
 const MAX_DISCORD_FILE_SIZE: usize = 8 * 1024 * 1024;
 const MAX_MATRIX_FILE_SIZE: usize = 50 * 1024 * 1024;
@@ -29,15 +30,20 @@ impl MediaHandler {
 
     pub async fn download_from_url(&self, url: &str) -> Result<MediaInfo> {
         debug!("downloading media from {}", url);
-        
-        let response = self.client
+
+        let response = self
+            .client
             .get(url)
             .send()
             .await
             .map_err(|e| anyhow!("failed to download from {}: {}", url, e))?;
-        
+
         if !response.status().is_success() {
-            return Err(anyhow!("failed to download from {}: status {}", url, response.status()));
+            return Err(anyhow!(
+                "failed to download from {}: status {}",
+                url,
+                response.status()
+            ));
         }
 
         let headers = response.headers().clone();
@@ -49,13 +55,13 @@ impl MediaHandler {
             .get("content-disposition")
             .and_then(|v| v.to_str().ok())
             .map(ToOwned::to_owned);
-        
+
         let data = response
             .bytes()
             .await
             .map_err(|e| anyhow!("failed to read response body: {}", e))?
             .to_vec();
-        
+
         let size = data.len();
         let mut filename = content_disposition
             .as_deref()
@@ -64,9 +70,9 @@ impl MediaHandler {
             .unwrap_or_else(|| "attachment".to_string());
         let content_type = normalize_content_type(raw_content_type.as_deref(), &filename, &data);
         filename = ensure_filename_extension(&filename, &content_type);
-        
+
         debug!("downloaded {} bytes from {}", size, url);
-        
+
         Ok(MediaInfo {
             data,
             content_type,
@@ -79,22 +85,18 @@ impl MediaHandler {
         if !mxc_url.starts_with("mxc://") {
             return Err(anyhow!("invalid mxc URL: {}", mxc_url));
         }
-        
+
         let mxc_path = mxc_url.trim_start_matches("mxc://");
         let download_url = format!(
             "{}/_matrix/media/v3/download/{}",
             self.homeserver_url.trim_end_matches('/'),
             mxc_path
         );
-        
+
         self.download_from_url(&download_url).await
     }
 
-    pub async fn upload_to_matrix(
-        &self,
-        media: &MediaInfo,
-        access_token: &str,
-    ) -> Result<String> {
+    pub async fn upload_to_matrix(&self, media: &MediaInfo, access_token: &str) -> Result<String> {
         if media.size > MAX_MATRIX_FILE_SIZE {
             return Err(anyhow!(
                 "file too large for Matrix: {} bytes (max {})",
@@ -102,16 +104,17 @@ impl MediaHandler {
                 MAX_MATRIX_FILE_SIZE
             ));
         }
-        
+
         let upload_url = format!(
             "{}/_matrix/media/v3/upload?filename={}",
             self.homeserver_url.trim_end_matches('/'),
             urlencoding::encode(&media.filename)
         );
-        
+
         debug!("uploading {} to Matrix", media.filename);
-        
-        let response = self.client
+
+        let response = self
+            .client
             .post(&upload_url)
             .header("Authorization", format!("Bearer {}", access_token))
             .header("Content-Type", &media.content_type)
@@ -119,25 +122,27 @@ impl MediaHandler {
             .send()
             .await
             .map_err(|e| anyhow!("failed to upload to Matrix: {}", e))?;
-        
+
         let status = response.status();
-        
+
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
             return Err(anyhow!("failed to upload to Matrix: {} - {}", status, body));
         }
-        
-        let body_bytes = response.bytes().await
+
+        let body_bytes = response
+            .bytes()
+            .await
             .map_err(|e| anyhow!("failed to read response body: {}", e))?;
         let json: serde_json::Value = serde_json::from_slice(&body_bytes)
             .map_err(|e| anyhow!("failed to parse upload response: {}", e))?;
-        
+
         let content_uri = json
             .get("content_uri")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("no content_uri in upload response"))?
             .to_string();
-        
+
         debug!("uploaded to Matrix: {}", content_uri);
         Ok(content_uri)
     }
@@ -174,10 +179,10 @@ fn filename_from_content_disposition(value: &str) -> Option<String> {
     }
 
     for part in value.split(';').map(str::trim) {
-        if let Some(raw) = part.strip_prefix("filename=") {
-            if let Some(name) = sanitize_filename(trim_wrapping_quotes(raw.trim())) {
-                return Some(name);
-            }
+        if let Some(raw) = part.strip_prefix("filename=")
+            && let Some(name) = sanitize_filename(trim_wrapping_quotes(raw.trim()))
+        {
+            return Some(name);
         }
     }
 
@@ -209,10 +214,7 @@ fn sanitize_filename(raw: &str) -> Option<String> {
         return None;
     }
 
-    let cleaned: String = basename
-        .chars()
-        .filter(|c| !c.is_control())
-        .collect();
+    let cleaned: String = basename.chars().filter(|c| !c.is_control()).collect();
 
     if cleaned.is_empty() {
         None
@@ -367,7 +369,8 @@ mod tests {
     #[test]
     fn infers_png_type_and_extension_when_header_is_octet_stream() {
         let body = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0];
-        let content_type = normalize_content_type(Some("application/octet-stream"), "attachment", &body);
+        let content_type =
+            normalize_content_type(Some("application/octet-stream"), "attachment", &body);
         assert_eq!(content_type, "image/png");
 
         let filename = ensure_filename_extension("attachment", &content_type);

@@ -13,7 +13,11 @@ pub struct EmojiHandler {
 }
 
 impl EmojiHandler {
-    pub fn new(db: Arc<DatabaseManager>, media_handler: Arc<MediaHandler>, homeserver_url: String) -> Self {
+    pub fn new(
+        db: Arc<DatabaseManager>,
+        media_handler: Arc<MediaHandler>,
+        homeserver_url: String,
+    ) -> Self {
         Self {
             db,
             media_handler,
@@ -31,28 +35,28 @@ impl EmojiHandler {
             return Err(anyhow::anyhow!("Non-numerical emoji ID: {}", emoji_id));
         }
 
-        if let Some(cached) = self.db.emoji_store().get_emoji_by_discord_id(emoji_id).await? {
+        if let Some(cached) = self
+            .db
+            .emoji_store()
+            .get_emoji_by_discord_id(emoji_id)
+            .await?
+        {
             debug!("Emoji cache hit for {} ({})", emoji_name, emoji_id);
             return Ok(cached.mxc_url);
         }
 
         let ext = if animated { "gif" } else { "png" };
-        let url = format!(
-            "https://cdn.discordapp.com/emojis/{}.{}",
-            emoji_id, ext
-        );
+        let url = format!("https://cdn.discordapp.com/emojis/{}.{}", emoji_id, ext);
 
         info!("Downloading emoji {} from {}", emoji_name, url);
 
         let media = self.media_handler.download_from_url(&url).await?;
-        
-        let content_type = if animated {
-            "image/gif"
-        } else {
-            "image/png"
-        };
 
-        let mxc_url = self.upload_to_matrix(&media.data, content_type, &media.filename).await?;
+        let content_type = if animated { "image/gif" } else { "image/png" };
+
+        let mxc_url = self
+            .upload_to_matrix(&media.data, content_type, &media.filename)
+            .await?;
 
         let emoji = EmojiMapping::new(
             emoji_id.to_string(),
@@ -67,7 +71,12 @@ impl EmojiHandler {
         Ok(mxc_url)
     }
 
-    async fn upload_to_matrix(&self, data: &[u8], content_type: &str, filename: &str) -> Result<String> {
+    async fn upload_to_matrix(
+        &self,
+        data: &[u8],
+        content_type: &str,
+        filename: &str,
+    ) -> Result<String> {
         let upload_url = format!(
             "{}/_matrix/media/v3/upload?filename={}",
             self.homeserver_url.trim_end_matches('/'),
@@ -141,7 +150,7 @@ mod tests {
             Arc::new(crate::media::MediaHandler::new("http://localhost:8008")),
             "http://localhost:8008".to_string(),
         );
-        
+
         let html = handler.emoji_to_matrix_html("mxc://example.org/abc123", "smile");
         assert!(html.contains("mxc://example.org/abc123"));
         assert!(html.contains(":smile:"));
@@ -155,7 +164,7 @@ mod tests {
             Arc::new(crate::media::MediaHandler::new("http://localhost:8008")),
             "http://localhost:8008".to_string(),
         );
-        
+
         let plain = handler.emoji_to_matrix_plain("smile");
         assert_eq!(plain, ":smile:");
     }

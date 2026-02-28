@@ -1,6 +1,8 @@
-use super::ConfigError;
-use serde::{Deserialize, Deserializer, Serialize};
 use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Deserializer, Serialize};
+
+use super::ConfigError;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
@@ -199,8 +201,6 @@ impl DatabaseConfig {
         let url = self.connection_string();
         if url.starts_with("sqlite://") {
             DbType::Sqlite
-        } else if url.starts_with("postgres://") || url.starts_with("postgresql://") {
-            DbType::Postgres
         } else {
             DbType::Postgres
         }

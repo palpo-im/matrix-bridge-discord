@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
+
 use tokio::sync::RwLock;
 
 struct TimedValue<V> {
@@ -108,8 +109,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::thread::sleep;
+
+    use super::*;
 
     #[test]
     fn timed_cache_returns_value_before_expiry() {

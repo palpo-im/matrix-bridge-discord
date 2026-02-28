@@ -47,7 +47,7 @@ pub fn parse_guild_and_channel(args: &[String]) -> Option<(String, String)> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_guild_and_channel, parse_prefixed_command, ParsedCommand};
+    use super::{ParsedCommand, parse_guild_and_channel, parse_prefixed_command};
 
     #[test]
     fn parse_prefixed_command_returns_none_for_other_prefix() {

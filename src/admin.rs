@@ -73,7 +73,7 @@ impl AdminNotifier {
         };
 
         info!("Sending token invalid notification to {}", admin_mxid);
-        
+
         let message = "⚠️ **Discord Bot Token Invalid**\n\nYour Discord bot token appears to be invalid. The bridge cannot function properly.\n\nPlease update your bot token in the configuration and restart the bridge.";
 
         self.send_admin_message(admin_mxid, message).await
@@ -84,8 +84,10 @@ impl AdminNotifier {
             return Ok(());
         }
 
-        let count = self.error_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        
+        let count = self
+            .error_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
         if count < self.config.error_threshold {
             return Ok(());
         }
@@ -94,7 +96,10 @@ impl AdminNotifier {
             return Ok(());
         };
 
-        debug!("Sending error notification to {} (count: {})", admin_mxid, count);
+        debug!(
+            "Sending error notification to {} (count: {})",
+            admin_mxid, count
+        );
 
         let message = if let Some(ctx) = context {
             format!(
@@ -109,9 +114,10 @@ impl AdminNotifier {
         };
 
         self.send_admin_message(admin_mxid, &message).await?;
-        
-        self.error_count.store(0, std::sync::atomic::Ordering::Relaxed);
-        
+
+        self.error_count
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+
         Ok(())
     }
 
@@ -166,7 +172,8 @@ impl AdminNotifier {
     }
 
     pub fn reset_error_count(&self) {
-        self.error_count.store(0, std::sync::atomic::Ordering::Relaxed);
+        self.error_count
+            .store(0, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn has_admin_configured(&self) -> bool {

@@ -1,11 +1,9 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use matrix_bot_sdk::{
-    appservice::{Appservice, AppserviceHandler},
-    client::{MatrixAuth, MatrixClient},
-    models::CreateRoom,
-};
+use matrix_bot_sdk::appservice::{Appservice, AppserviceHandler};
+use matrix_bot_sdk::client::{MatrixAuth, MatrixClient};
+use matrix_bot_sdk::models::CreateRoom;
 use serde_json::{Value, json};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
@@ -93,7 +91,11 @@ pub struct MatrixEvent {
     pub timestamp: Option<String>,
 }
 
-fn build_matrix_message_content(body: &str, reply_to: Option<&str>, edit_of: Option<&str>) -> Value {
+fn build_matrix_message_content(
+    body: &str,
+    reply_to: Option<&str>,
+    edit_of: Option<&str>,
+) -> Value {
     let mut content = json!({
         "msgtype": "m.text",
         "body": body,
@@ -349,6 +351,7 @@ impl MatrixAppservice {
         Ok(event_id)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn send_media_message(
         &self,
         room_id: &str,
@@ -389,12 +392,9 @@ impl MatrixAppservice {
         Ok(event_id)
     }
 
-    pub async fn upload_media(
-        &self,
-        media: &crate::media::MediaInfo,
-    ) -> Result<String> {
+    pub async fn upload_media(&self, media: &crate::media::MediaInfo) -> Result<String> {
         use reqwest::Client;
-        
+
         let upload_url = format!(
             "{}/_matrix/media/v3/upload?filename={}",
             self.config.bridge.homeserver_url.trim_end_matches('/'),
@@ -406,7 +406,10 @@ impl MatrixAppservice {
         let client = Client::new();
         let response = client
             .post(&upload_url)
-            .header("Authorization", format!("Bearer {}", self.config.registration.appservice_token))
+            .header(
+                "Authorization",
+                format!("Bearer {}", self.config.registration.appservice_token),
+            )
             .header("Content-Type", &media.content_type)
             .body(media.data.clone())
             .send()
@@ -416,10 +419,16 @@ impl MatrixAppservice {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!("failed to upload media: {} - {}", status, body));
+            return Err(anyhow::anyhow!(
+                "failed to upload media: {} - {}",
+                status,
+                body
+            ));
         }
 
-        let body_bytes = response.bytes().await
+        let body_bytes = response
+            .bytes()
+            .await
             .map_err(|e| anyhow::anyhow!("failed to read response: {}", e))?;
         let json: Value = serde_json::from_slice(&body_bytes)
             .map_err(|e| anyhow::anyhow!("failed to parse response: {}", e))?;
@@ -502,8 +511,12 @@ impl MatrixAppservice {
             .get_room_state_event(room_id, "m.room.name", "")
             .await
             .ok();
-        
-        Ok(state.and_then(|s| s.get("name").and_then(|n| n.as_str()).map(ToOwned::to_owned)))
+
+        Ok(state.and_then(|s| {
+            s.get("name")
+                .and_then(|n| n.as_str())
+                .map(ToOwned::to_owned)
+        }))
     }
 
     pub async fn get_room_topic(&self, room_id: &str) -> Result<Option<String>> {
@@ -513,8 +526,12 @@ impl MatrixAppservice {
             .get_room_state_event(room_id, "m.room.topic", "")
             .await
             .ok();
-        
-        Ok(state.and_then(|s| s.get("topic").and_then(|t| t.as_str()).map(ToOwned::to_owned)))
+
+        Ok(state.and_then(|s| {
+            s.get("topic")
+                .and_then(|t| t.as_str())
+                .map(ToOwned::to_owned)
+        }))
     }
 
     pub async fn set_room_name(&self, room_id: &str, name: &str) -> Result<()> {
@@ -615,11 +632,20 @@ impl MatrixAppservice {
     }
 
     pub async fn get_room_members(&self, room_id: &str) -> Result<Vec<String>> {
-        let members = self.appservice.client.get_room_members(room_id, None, None).await?;
+        let members = self
+            .appservice
+            .client
+            .get_room_members(room_id, None, None)
+            .await?;
         Ok(members.into_iter().map(|m| m.user_id).collect())
     }
 
-    pub async fn send_read_receipt(&self, room_id: &str, event_id: &str, user_id: &str) -> Result<()> {
+    pub async fn send_read_receipt(
+        &self,
+        room_id: &str,
+        event_id: &str,
+        user_id: &str,
+    ) -> Result<()> {
         let ghost_client = self.appservice.client.clone();
         ghost_client
             .impersonate_user_id(Some(user_id), None::<&str>)
@@ -632,12 +658,18 @@ impl MatrixAppservice {
             urlencoding::encode(event_id)
         );
 
-        debug!("sending read receipt for user={} room={} event={}", user_id, room_id, event_id);
+        debug!(
+            "sending read receipt for user={} room={} event={}",
+            user_id, room_id, event_id
+        );
 
         let client = reqwest::Client::new();
         let response = client
             .post(&url)
-            .header("Authorization", format!("Bearer {}", self.config.registration.appservice_token))
+            .header(
+                "Authorization",
+                format!("Bearer {}", self.config.registration.appservice_token),
+            )
             .json(&serde_json::json!({}))
             .send()
             .await
@@ -676,7 +708,10 @@ impl MatrixAppservice {
         let client = reqwest::Client::new();
         let response = client
             .post(&url)
-            .header("Authorization", format!("Bearer {}", self.config.registration.appservice_token))
+            .header(
+                "Authorization",
+                format!("Bearer {}", self.config.registration.appservice_token),
+            )
             .json(&serde_json::json!({
                 "user_id": user_id
             }))
@@ -693,7 +728,12 @@ impl MatrixAppservice {
         Ok(())
     }
 
-    pub async fn kick_user_from_room(&self, room_id: &str, user_id: &str, reason: Option<&str>) -> Result<()> {
+    pub async fn kick_user_from_room(
+        &self,
+        room_id: &str,
+        user_id: &str,
+        reason: Option<&str>,
+    ) -> Result<()> {
         let url = format!(
             "{}/_matrix/client/v3/rooms/{}/kick",
             self.config.bridge.homeserver_url.trim_end_matches('/'),
@@ -705,7 +745,10 @@ impl MatrixAppservice {
         let client = reqwest::Client::new();
         let response = client
             .post(&url)
-            .header("Authorization", format!("Bearer {}", self.config.registration.appservice_token))
+            .header(
+                "Authorization",
+                format!("Bearer {}", self.config.registration.appservice_token),
+            )
             .json(&serde_json::json!({
                 "user_id": user_id,
                 "reason": reason.unwrap_or("")
@@ -723,7 +766,12 @@ impl MatrixAppservice {
         Ok(())
     }
 
-    pub async fn ban_user_from_room(&self, room_id: &str, user_id: &str, reason: Option<&str>) -> Result<()> {
+    pub async fn ban_user_from_room(
+        &self,
+        room_id: &str,
+        user_id: &str,
+        reason: Option<&str>,
+    ) -> Result<()> {
         let url = format!(
             "{}/_matrix/client/v3/rooms/{}/ban",
             self.config.bridge.homeserver_url.trim_end_matches('/'),
@@ -735,7 +783,10 @@ impl MatrixAppservice {
         let client = reqwest::Client::new();
         let response = client
             .post(&url)
-            .header("Authorization", format!("Bearer {}", self.config.registration.appservice_token))
+            .header(
+                "Authorization",
+                format!("Bearer {}", self.config.registration.appservice_token),
+            )
             .json(&serde_json::json!({
                 "user_id": user_id,
                 "reason": reason.unwrap_or("")
@@ -765,7 +816,10 @@ impl MatrixAppservice {
         let client = reqwest::Client::new();
         let response = client
             .post(&url)
-            .header("Authorization", format!("Bearer {}", self.config.registration.appservice_token))
+            .header(
+                "Authorization",
+                format!("Bearer {}", self.config.registration.appservice_token),
+            )
             .json(&serde_json::json!({
                 "user_id": user_id
             }))
@@ -782,9 +836,13 @@ impl MatrixAppservice {
         Ok(())
     }
 
-    pub async fn set_ghost_displayname(&self, discord_user_id: &str, displayname: &str) -> Result<()> {
+    pub async fn set_ghost_displayname(
+        &self,
+        discord_user_id: &str,
+        displayname: &str,
+    ) -> Result<()> {
         let user_id = ghost_user_id(discord_user_id, &self.config.bridge.domain);
-        
+
         let ghost_client = self.appservice.client.clone();
         ghost_client
             .impersonate_user_id(Some(&user_id), None::<&str>)
@@ -796,7 +854,7 @@ impl MatrixAppservice {
 
     pub async fn set_ghost_avatar(&self, discord_user_id: &str, avatar_url: &str) -> Result<()> {
         let user_id = ghost_user_id(discord_user_id, &self.config.bridge.domain);
-        
+
         let ghost_client = self.appservice.client.clone();
         ghost_client
             .impersonate_user_id(Some(&user_id), None::<&str>)
@@ -806,7 +864,13 @@ impl MatrixAppservice {
         Ok(())
     }
 
-    pub async fn upload_media_for_ghost(&self, discord_user_id: &str, data: &[u8], content_type: &str, filename: &str) -> Result<String> {
+    pub async fn upload_media_for_ghost(
+        &self,
+        _discord_user_id: &str,
+        data: &[u8],
+        content_type: &str,
+        filename: &str,
+    ) -> Result<String> {
         let media = crate::media::MediaInfo {
             data: data.to_vec(),
             content_type: content_type.to_string(),
@@ -823,54 +887,70 @@ impl MatrixAppservice {
 
     pub async fn kick_ghost_from_room(&self, discord_user_id: &str, room_id: &str) -> Result<()> {
         let ghost_user_id = ghost_user_id(discord_user_id, &self.config.bridge.domain);
-        self.kick_user_from_room(room_id, &ghost_user_id, None).await
+        self.kick_user_from_room(room_id, &ghost_user_id, None)
+            .await
     }
 
-    pub async fn set_ghost_room_displayname(&self, discord_user_id: &str, room_id: &str, displayname: &str) -> Result<()> {
+    pub async fn set_ghost_room_displayname(
+        &self,
+        discord_user_id: &str,
+        room_id: &str,
+        displayname: &str,
+    ) -> Result<()> {
         let user_id = ghost_user_id(discord_user_id, &self.config.bridge.domain);
-        
+
         let content = json!({
             "displayname": displayname,
             "membership": "join"
         });
-        
+
         self.appservice
             .client
             .send_state_event(room_id, "m.room.member", &user_id, &content)
             .await?;
-        
+
         Ok(())
     }
 
-    pub async fn set_ghost_room_avatar(&self, discord_user_id: &str, room_id: &str, avatar_mxc: &str) -> Result<()> {
+    pub async fn set_ghost_room_avatar(
+        &self,
+        discord_user_id: &str,
+        room_id: &str,
+        avatar_mxc: &str,
+    ) -> Result<()> {
         let user_id = ghost_user_id(discord_user_id, &self.config.bridge.domain);
-        
+
         let content = json!({
             "avatar_url": avatar_mxc,
             "membership": "join"
         });
-        
+
         self.appservice
             .client
             .send_state_event(room_id, "m.room.member", &user_id, &content)
             .await?;
-        
+
         Ok(())
     }
 
-    pub async fn set_ghost_room_roles(&self, discord_user_id: &str, room_id: &str, roles: &[String]) -> Result<()> {
+    pub async fn set_ghost_room_roles(
+        &self,
+        discord_user_id: &str,
+        room_id: &str,
+        roles: &[String],
+    ) -> Result<()> {
         let user_id = ghost_user_id(discord_user_id, &self.config.bridge.domain);
-        
+
         let content = json!({
             "membership": "join",
             "discord_roles": roles
         });
-        
+
         self.appservice
             .client
             .send_state_event(room_id, "m.room.member", &user_id, &content)
             .await?;
-        
+
         Ok(())
     }
 
@@ -893,7 +973,10 @@ impl MatrixAppservice {
         let client = reqwest::Client::new();
         let response = client
             .put(&url)
-            .header("Authorization", format!("Bearer {}", self.config.registration.appservice_token))
+            .header(
+                "Authorization",
+                format!("Bearer {}", self.config.registration.appservice_token),
+            )
             .json(&serde_json::json!({
                 "join_rule": visibility
             }))
@@ -917,7 +1000,7 @@ impl MatrixAppservice {
             .get_room_state_event(room_id, "m.room.avatar", "")
             .await
             .ok();
-        
+
         Ok(state.and_then(|s| s.get("url").and_then(|u| u.as_str()).map(ToOwned::to_owned)))
     }
 
@@ -953,7 +1036,10 @@ mod tests {
         let content = build_matrix_message_content("hello", Some("$event123"), None);
         assert_eq!(content["msgtype"], "m.text");
         assert_eq!(content["body"], "hello");
-        assert_eq!(content["m.relates_to"]["m.in_reply_to"]["event_id"], "$event123");
+        assert_eq!(
+            content["m.relates_to"]["m.in_reply_to"]["event_id"],
+            "$event123"
+        );
         assert!(content.get("m.new_content").is_none());
     }
 
@@ -983,7 +1069,8 @@ mod tests {
 
     #[test]
     fn message_content_prefers_edit_relation_over_reply_relation() {
-        let content = build_matrix_message_content("edited", Some("$reply_target"), Some("$edit_target"));
+        let content =
+            build_matrix_message_content("edited", Some("$reply_target"), Some("$edit_target"));
 
         assert_eq!(content["body"], "* edited");
         assert_eq!(content["m.relates_to"]["rel_type"], "m.replace");

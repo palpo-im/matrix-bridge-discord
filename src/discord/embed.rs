@@ -180,7 +180,7 @@ pub fn build_matrix_message_embed(
 ) -> DiscordEmbed {
     let mut embed = DiscordEmbed::new().description(body);
 
-    let mut author = EmbedAuthor {
+    let author = EmbedAuthor {
         name: sender_displayname.to_string(),
         icon_url: sender_avatar_url.map(ToOwned::to_owned),
         url: None,
