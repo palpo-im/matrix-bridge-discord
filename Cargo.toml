@@ -15,8 +15,9 @@ path = "src/main.rs"
 
 [features]
 default = ["postgres", "sqlite"]
-postgres = []
-sqlite = []
+postgres = ["diesel/postgres"]
+sqlite = ["diesel/sqlite", "dep:libsqlite3-sys"]
+mysql = ["diesel/mysql"]
 
 [dependencies]
 salvo = { version = "0.89", features = ["oapi", "quinn"] }
@@ -32,12 +33,10 @@ serenity = { version = "0.12", default-features = false, features = [
 ] }
 songbird = { version = "0.5.0", optional = true }
 diesel = { version = "2.3.6", default-features = false, features = [
-    "postgres",
-    "sqlite",
     "r2d2",
     "chrono",
 ] }
-libsqlite3-sys = { version = "0.35.0", features = ["bundled"] }
+libsqlite3-sys = { version = "0.35.0", features = ["bundled"], optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
 serde_json = "1.0"

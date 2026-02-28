@@ -12,7 +12,7 @@ Rust 实现的 Matrix <-> Discord 桥接服务。
 - 纯 Rust 实现（旧 Node.js/TypeScript 代码已移除）
 - 包含 Matrix appservice 与 Discord bot 桥接核心
 - 提供健康检查、状态、指标与 provisioning HTTP 接口
-- 支持 PostgreSQL 与 SQLite
+- 支持 PostgreSQL、SQLite 和 MySQL（需启用功能开关）
 - 提供可直接使用的 Dockerfile
 
 ## 仓库结构
@@ -27,7 +27,7 @@ Rust 实现的 Matrix <-> Discord 桥接服务。
 - Rust 工具链（与项目兼容；Docker 构建使用 Rust 1.93）
 - 已启用 appservice 的 Matrix homeserver
 - Discord bot token
-- PostgreSQL 或 SQLite 数据库
+- PostgreSQL、SQLite 或 MySQL 数据库
 
 ## 本地快速开始
 
@@ -200,7 +200,13 @@ docker run --rm \
 
 - `postgres://` 或 `postgresql://` -> PostgreSQL
 - `sqlite://` -> SQLite
+- `mysql://` 或 `mariadb://` -> MySQL / MariaDB
 - 其他前缀 -> 回退到 PostgreSQL
+
+MySQL 说明：
+
+- 需要在构建时启用 `mysql` 功能，例如 `cargo run -p matrix-bridge-discord --features mysql`
+- 需要安装 `libmysqlclient`（或 MariaDB Connector/C）供 `mysqlclient-sys` 链接
 
 示例：
 
@@ -214,6 +220,13 @@ database:
 ```yaml
 database:
   url: "sqlite://./data/matrix-bridge.db"
+```
+
+```yaml
+database:
+  url: "mysql://user:password@localhost:3306/matrix_bridge"
+  max_connections: 10
+  min_connections: 1
 ```
 
 ## 环境变量覆盖

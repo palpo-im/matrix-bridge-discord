@@ -12,7 +12,7 @@ Contact: `chris@acroidea.com`
 - Rust-only implementation (legacy Node.js/TypeScript code has been removed)
 - Matrix appservice + Discord bot bridge core
 - HTTP endpoints for health/status/metrics and provisioning
-- Database backends: PostgreSQL and SQLite
+- Database backends: PostgreSQL, SQLite, and MySQL (feature-gated)
 - Dockerfile for local build and container runtime
 
 ## Repository Layout
@@ -27,7 +27,7 @@ Contact: `chris@acroidea.com`
 - Rust toolchain (compatible with the project; Docker build uses Rust 1.93)
 - A Matrix homeserver configured for appservices
 - A Discord bot token
-- Database: PostgreSQL or SQLite
+- Database: PostgreSQL, SQLite, or MySQL
 
 ## Quick Start (Local)
 
@@ -200,7 +200,13 @@ The bridge auto-detects DB type from connection string prefix:
 
 - `postgres://` or `postgresql://` -> PostgreSQL
 - `sqlite://` -> SQLite
+- `mysql://` or `mariadb://` -> MySQL / MariaDB
 - anything else -> PostgreSQL fallback
+
+MySQL backend note:
+
+- Build with the `mysql` feature enabled, e.g. `cargo run -p matrix-bridge-discord --features mysql`
+- Install `libmysqlclient` (or MariaDB Connector/C) so `mysqlclient-sys` can link
 
 Examples:
 
@@ -214,6 +220,13 @@ database:
 ```yaml
 database:
   url: "sqlite://./data/matrix-bridge.db"
+```
+
+```yaml
+database:
+  url: "mysql://user:password@localhost:3306/matrix_bridge"
+  max_connections: 10
+  min_connections: 1
 ```
 
 ## Environment Overrides

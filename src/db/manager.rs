@@ -1,13 +1,17 @@
 use std::sync::Arc;
 
-#[cfg(feature = "postgres")]
+#[cfg(any(feature = "postgres", feature = "mysql", feature = "sqlite"))]
 use diesel::RunQueryDsl;
+#[cfg(feature = "mysql")]
+use diesel::mysql::MysqlConnection;
 #[cfg(feature = "postgres")]
 use diesel::pg::PgConnection;
-#[cfg(feature = "postgres")]
+#[cfg(any(feature = "postgres", feature = "mysql"))]
 use diesel::r2d2::{self, ConnectionManager};
 
 use crate::config::{DatabaseConfig as ConfigDatabaseConfig, DbType as ConfigDbType};
+#[cfg(feature = "mysql")]
+use crate::db::mysql::{MysqlEmojiStore, MysqlMessageStore, MysqlRoomStore, MysqlUserStore};
 #[cfg(feature = "postgres")]
 use crate::db::postgres::{
     PostgresEmojiStore, PostgresMessageStore, PostgresRoomStore, PostgresUserStore,
@@ -16,6 +20,8 @@ use crate::db::{DatabaseError, EmojiStore, MessageStore, RoomStore, UserStore};
 
 #[cfg(feature = "postgres")]
 pub type Pool = r2d2::Pool<ConnectionManager<PgConnection>>;
+#[cfg(feature = "mysql")]
+pub type MysqlPool = r2d2::Pool<ConnectionManager<MysqlConnection>>;
 
 #[cfg(feature = "sqlite")]
 use diesel::Connection;
@@ -29,6 +35,8 @@ use crate::db::sqlite::{SqliteEmojiStore, SqliteMessageStore, SqliteRoomStore, S
 pub struct DatabaseManager {
     #[cfg(feature = "postgres")]
     postgres_pool: Option<Pool>,
+    #[cfg(feature = "mysql")]
+    mysql_pool: Option<MysqlPool>,
     #[cfg(feature = "sqlite")]
     sqlite_path: Option<String>,
     room_store: Arc<dyn RoomStore>,
@@ -42,6 +50,7 @@ pub struct DatabaseManager {
 pub enum DbType {
     Postgres,
     Sqlite,
+    Mysql,
 }
 
 impl From<ConfigDbType> for DbType {
@@ -49,6 +58,7 @@ impl From<ConfigDbType> for DbType {
         match value {
             ConfigDbType::Postgres => DbType::Postgres,
             ConfigDbType::Sqlite => DbType::Sqlite,
+            ConfigDbType::Mysql => DbType::Mysql,
         }
     }
 }
@@ -81,6 +91,8 @@ impl DatabaseManager {
 
                 Ok(Self {
                     postgres_pool: Some(pool),
+                    #[cfg(feature = "mysql")]
+                    mysql_pool: None,
                     #[cfg(feature = "sqlite")]
                     sqlite_path: None,
                     room_store,
@@ -103,7 +115,43 @@ impl DatabaseManager {
                 Ok(Self {
                     #[cfg(feature = "postgres")]
                     postgres_pool: None,
+                    #[cfg(feature = "mysql")]
+                    mysql_pool: None,
                     sqlite_path: Some(path),
+                    room_store,
+                    user_store,
+                    message_store,
+                    emoji_store,
+                    db_type,
+                })
+            }
+            #[cfg(feature = "mysql")]
+            DbType::Mysql => {
+                let connection_string = config.connection_string();
+                let max_connections = config.max_connections();
+                let min_connections = config.min_connections();
+
+                let manager = ConnectionManager::<MysqlConnection>::new(connection_string);
+
+                let builder = r2d2::Pool::builder()
+                    .max_size(max_connections.unwrap_or(10))
+                    .min_idle(Some(min_connections.unwrap_or(1)));
+
+                let pool = builder
+                    .build(manager)
+                    .map_err(|e| DatabaseError::Connection(e.to_string()))?;
+
+                let room_store = Arc::new(MysqlRoomStore::new(pool.clone()));
+                let user_store = Arc::new(MysqlUserStore::new(pool.clone()));
+                let message_store = Arc::new(MysqlMessageStore::new(pool.clone()));
+                let emoji_store = Arc::new(MysqlEmojiStore::new(pool.clone()));
+
+                Ok(Self {
+                    #[cfg(feature = "postgres")]
+                    postgres_pool: None,
+                    mysql_pool: Some(pool),
+                    #[cfg(feature = "sqlite")]
+                    sqlite_path: None,
                     room_store,
                     user_store,
                     message_store,
@@ -123,6 +171,12 @@ impl DatabaseManager {
                     "SQLite feature not enabled".to_string(),
                 ));
             }
+            #[cfg(not(feature = "mysql"))]
+            DbType::Mysql => {
+                return Err(DatabaseError::Connection(
+                    "MySQL feature not enabled".to_string(),
+                ));
+            }
         }
     }
 
@@ -140,6 +194,8 @@ impl DatabaseManager {
         Ok(Self {
             #[cfg(feature = "postgres")]
             postgres_pool: None,
+            #[cfg(feature = "mysql")]
+            mysql_pool: None,
             sqlite_path: Some(":memory:".to_string()),
             room_store,
             user_store,
@@ -161,6 +217,11 @@ impl DatabaseManager {
                 let path = self.sqlite_path.as_ref().unwrap();
                 return Self::migrate_sqlite(path).await;
             }
+            #[cfg(feature = "mysql")]
+            DbType::Mysql => {
+                let pool = self.mysql_pool.as_ref().unwrap();
+                return Self::migrate_mysql(pool).await;
+            }
             #[cfg(not(feature = "postgres"))]
             DbType::Postgres => {
                 return Err(DatabaseError::Migration(
@@ -171,6 +232,12 @@ impl DatabaseManager {
             DbType::Sqlite => {
                 return Err(DatabaseError::Migration(
                     "SQLite feature not enabled".to_string(),
+                ));
+            }
+            #[cfg(not(feature = "mysql"))]
+            DbType::Mysql => {
+                return Err(DatabaseError::Migration(
+                    "MySQL feature not enabled".to_string(),
                 ));
             }
         }
@@ -258,6 +325,98 @@ impl DatabaseManager {
                 "CREATE INDEX IF NOT EXISTS idx_user_activity_timestamp ON user_activity(timestamp)",
                 "CREATE INDEX IF NOT EXISTS idx_emoji_mappings_discord_id ON emoji_mappings(discord_emoji_id)",
                 "CREATE INDEX IF NOT EXISTS idx_emoji_mappings_mxc ON emoji_mappings(mxc_url)",
+            ];
+
+            for statement in statements {
+                diesel::sql_query(statement)
+                    .execute(&mut conn)
+                    .map_err(|e| DatabaseError::Migration(e.to_string()))?;
+            }
+
+            Ok(())
+        })
+        .await
+        .map_err(|e| DatabaseError::Migration(format!("migration task failed: {e}")))?
+    }
+
+    #[cfg(feature = "mysql")]
+    async fn migrate_mysql(pool: &MysqlPool) -> Result<(), DatabaseError> {
+        let pool = pool.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = pool
+                .get()
+                .map_err(|e| DatabaseError::Connection(e.to_string()))?;
+
+            let statements = [
+                r#"
+                CREATE TABLE IF NOT EXISTS user_mappings (
+                    id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    matrix_user_id VARCHAR(255) NOT NULL UNIQUE,
+                    discord_user_id VARCHAR(64) NOT NULL UNIQUE,
+                    discord_username VARCHAR(255) NOT NULL,
+                    discord_discriminator VARCHAR(32) NOT NULL,
+                    discord_avatar TEXT NULL,
+                    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                "#,
+                r#"
+                CREATE TABLE IF NOT EXISTS room_mappings (
+                    id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    matrix_room_id VARCHAR(255) NOT NULL UNIQUE,
+                    discord_channel_id VARCHAR(64) NOT NULL UNIQUE,
+                    discord_channel_name VARCHAR(255) NOT NULL,
+                    discord_guild_id VARCHAR(64) NOT NULL,
+                    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+                    KEY idx_room_mappings_guild (discord_guild_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                "#,
+                r#"
+                CREATE TABLE IF NOT EXISTS processed_events (
+                    id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    event_id VARCHAR(255) NOT NULL UNIQUE,
+                    event_type VARCHAR(128) NOT NULL,
+                    source VARCHAR(128) NOT NULL,
+                    processed_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                "#,
+                r#"
+                CREATE TABLE IF NOT EXISTS message_mappings (
+                    id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    discord_message_id VARCHAR(64) NOT NULL UNIQUE,
+                    matrix_room_id VARCHAR(255) NOT NULL,
+                    matrix_event_id VARCHAR(255) NOT NULL,
+                    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+                    KEY idx_message_mappings_matrix_event (matrix_event_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                "#,
+                r#"
+                CREATE TABLE IF NOT EXISTS user_activity (
+                    id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    user_mapping_id BIGINT NOT NULL,
+                    activity_type VARCHAR(128) NOT NULL,
+                    timestamp DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                    metadata JSON NULL,
+                    KEY idx_user_activity_user_mapping (user_mapping_id),
+                    KEY idx_user_activity_timestamp (timestamp),
+                    CONSTRAINT fk_user_activity_user_mapping
+                        FOREIGN KEY (user_mapping_id) REFERENCES user_mappings(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                "#,
+                r#"
+                CREATE TABLE IF NOT EXISTS emoji_mappings (
+                    id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    discord_emoji_id VARCHAR(64) NOT NULL UNIQUE,
+                    emoji_name VARCHAR(255) NOT NULL,
+                    animated BOOLEAN NOT NULL DEFAULT FALSE,
+                    mxc_url VARCHAR(1024) NOT NULL,
+                    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+                    KEY idx_emoji_mappings_mxc (mxc_url)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                "#,
             ];
 
             for statement in statements {

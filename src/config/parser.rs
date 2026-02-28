@@ -201,6 +201,8 @@ impl DatabaseConfig {
         let url = self.connection_string();
         if url.starts_with("sqlite://") {
             DbType::Sqlite
+        } else if url.starts_with("mysql://") || url.starts_with("mariadb://") {
+            DbType::Mysql
         } else {
             DbType::Postgres
         }
@@ -229,14 +231,14 @@ impl DatabaseConfig {
 
     pub fn max_connections(&self) -> Option<u32> {
         match self.db_type() {
-            DbType::Postgres => self.max_connections,
+            DbType::Postgres | DbType::Mysql => self.max_connections,
             DbType::Sqlite => Some(1),
         }
     }
 
     pub fn min_connections(&self) -> Option<u32> {
         match self.db_type() {
-            DbType::Postgres => self.min_connections,
+            DbType::Postgres | DbType::Mysql => self.min_connections,
             DbType::Sqlite => Some(1),
         }
     }
@@ -246,6 +248,7 @@ impl DatabaseConfig {
 pub enum DbType {
     Postgres,
     Sqlite,
+    Mysql,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
