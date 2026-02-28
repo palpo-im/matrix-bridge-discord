@@ -555,11 +555,11 @@ impl super::MessageStore for MysqlMessageStore {
                 .map_err(|e| DatabaseError::Query(e.to_string()))?;
 
             if let Some(existing) = existing {
-                let updated_at = utc_to_naive(&mapping.updated_at);
+                let updated_at_value = utc_to_naive(&mapping.updated_at);
                 let changes = UpdateMessageMapping {
                     matrix_room_id: &mapping.matrix_room_id,
                     matrix_event_id: &mapping.matrix_event_id,
-                    updated_at: &updated_at,
+                    updated_at: &updated_at_value,
                 };
                 diesel::update(message_mappings.filter(id.eq(existing.id)))
                     .set(changes)
@@ -567,14 +567,14 @@ impl super::MessageStore for MysqlMessageStore {
                     .map(|_| ())
                     .map_err(|e| DatabaseError::Query(e.to_string()))
             } else {
-                let created_at = utc_to_naive(&mapping.created_at);
-                let updated_at = utc_to_naive(&mapping.updated_at);
+                let created_at_value = utc_to_naive(&mapping.created_at);
+                let updated_at_value = utc_to_naive(&mapping.updated_at);
                 let new_mapping = NewMessageMapping {
                     discord_message_id: &mapping.discord_message_id,
                     matrix_room_id: &mapping.matrix_room_id,
                     matrix_event_id: &mapping.matrix_event_id,
-                    created_at: &created_at,
-                    updated_at: &updated_at,
+                    created_at: &created_at_value,
+                    updated_at: &updated_at_value,
                 };
                 diesel::insert_into(message_mappings)
                     .values(new_mapping)
