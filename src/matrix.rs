@@ -490,8 +490,7 @@ impl MatrixAppservice {
         discord_user_id: &str,
         username: Option<&str>,
     ) -> Result<()> {
-        let display = username.unwrap_or(discord_user_id);
-        self.create_ghost_user(discord_user_id, display, Some(display))
+        self.create_ghost_user(discord_user_id, discord_user_id, username)
             .await?;
         Ok(())
     }
