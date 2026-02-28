@@ -88,6 +88,38 @@ auth:
 6. 如需桥接指定频道，可从 URL 获取 ID：
    - `https://discord.com/channels/<guild_id>/<channel_id>`
 
+## Matrix / Palpo 配置步骤（详细）
+
+1. 在 Palpo 配置文件（`palpo.toml`）中设置服务器名和 appservice 注册目录：
+
+```toml
+server_name = "example.com"
+appservice_registration_dir = "appservices"
+```
+
+2. 将桥接注册文件放到该目录下，例如：
+   - `appservices/discord-registration.yaml`
+3. 确保 Palpo 注册文件与桥配置中的 token 完全一致：
+   - registration 里的 `as_token` == bridge 的 appservice token
+   - registration 里的 `hs_token` == bridge 的 homeserver token
+4. 确保桥接配置里的 homeserver 指向 Palpo：
+
+```yaml
+bridge:
+  domain: "example.com"
+  homeserver_url: "http://127.0.0.1:6006" # 替换为你的 Palpo 地址
+```
+
+5. 先启动 Palpo，再启动本桥接服务。
+6. 检查双向连通性：
+   - Palpo 需要能访问 registration 中配置的 bridge `url`
+   - Bridge 需要能访问 `bridge.homeserver_url`（Palpo 地址）
+
+说明：
+
+- 如果 Palpo 和 bridge 在不同容器/主机，请避免使用无效的回环地址（`127.0.0.1`/`localhost`）。
+- Docker Desktop 场景下，bridge 容器访问宿主机 Palpo 通常可用 `host.docker.internal`。
+
 ## Matrix / Synapse 配置步骤（详细）
 
 1. 在 `config.yaml` 中设置 Matrix 相关参数：

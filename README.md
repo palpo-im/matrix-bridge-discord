@@ -88,6 +88,38 @@ auth:
 6. To bridge a specific Discord channel, collect IDs from:
    - `https://discord.com/channels/<guild_id>/<channel_id>`
 
+## Configure Matrix / Palpo (Step by Step)
+
+1. In Palpo config (`palpo.toml`), set your server name and appservice registration directory:
+
+```toml
+server_name = "example.com"
+appservice_registration_dir = "appservices"
+```
+
+2. Place your bridge registration file under that directory, for example:
+   - `appservices/discord-registration.yaml`
+3. Ensure tokens are consistent between Palpo registration and bridge config:
+   - `as_token` in registration == bridge appservice token
+   - `hs_token` in registration == bridge homeserver token
+4. Ensure bridge homeserver fields point to Palpo:
+
+```yaml
+bridge:
+  domain: "example.com"
+  homeserver_url: "http://127.0.0.1:6006" # Replace with your Palpo URL
+```
+
+5. Start Palpo, then start this bridge.
+6. Confirm connectivity both ways:
+   - Palpo must reach bridge registration `url` (for appservice transactions)
+   - Bridge must reach `bridge.homeserver_url` (your Palpo endpoint)
+
+Notes:
+
+- If Palpo and bridge run in different containers/hosts, do not use loopback addresses unless they are in the same network namespace.
+- For Docker Desktop, `host.docker.internal` is often useful when bridge container needs to reach host Palpo.
+
 ## Configure Matrix / Synapse (Step by Step)
 
 1. Set your Matrix-facing values in `config.yaml`:
