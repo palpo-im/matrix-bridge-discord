@@ -217,6 +217,8 @@ Provisioning：
 
 - Docker 工作流：`.github/workflows/docker.yml`
 - 二进制发布工作流（`v*` 标签触发）：`.github/workflows/release.yml`
+- crates.io 发布工作流：`.github/workflows/crates-release.yml`
+  - 需要配置仓库 Secret：`CRATES_TOKEN`（crates.io API token）
 
 ## 状态
 

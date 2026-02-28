@@ -217,6 +217,8 @@ Provisioning:
 
 - Docker workflow: `.github/workflows/docker.yml`
 - Release workflow (tag `v*`): `.github/workflows/release.yml`
+- crates.io publish workflow: `.github/workflows/crates-release.yml`
+  - Required repository secret: `CRATES_TOKEN` (crates.io API token)
 
 ## Status
 
