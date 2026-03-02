@@ -192,7 +192,7 @@ docker run --rm \
 
 - 容器默认监听 `0.0.0.0:9005`
 - 健康检查接口：`GET /health`
-- 默认注册文件名为 `discord-registration.yaml`，相对 `CONFIG_PATH` 解析
+- 默认注册文件名为 `discord-registration.yaml`，保存在 `palpo.toml` 定义的`appservice_registration_dir` 文件夹里面.
 
 ## 数据库配置
 

@@ -192,7 +192,7 @@ Notes:
 
 - Container listens on `0.0.0.0:9005` by default.
 - Health check endpoint: `GET /health`
-- Default registration file path is `discord-registration.yaml` resolved relative to `CONFIG_PATH`.
+- Default registration file path is `discord-registration.yaml` resolved relative to `appservice_registration_dir` defined in `palpo.toml`.
 
 ## Database Configuration
 

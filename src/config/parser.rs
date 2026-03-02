@@ -382,6 +382,13 @@ impl Config {
         Ok(config)
     }
 
+    pub fn load_from_bytes(bytes: &[u8]) -> Result<Self> {
+        let mut config: Config = serde_yaml::from_slice(bytes)?;
+        config.apply_env_overrides();
+        config.validate()?;
+        Ok(config)
+    }
+
     pub fn validate(&self) -> Result<(), ConfigError> {
         if self.bridge.domain.is_empty() {
             return Err(ConfigError::InvalidConfig(
