@@ -374,17 +374,19 @@ impl Config {
 
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, ConfigError> {
         let content = std::fs::read_to_string(&path)?;
+        let registration_field_presence = registration_field_presence_from_config_yaml(&content)?;
         let mut config: Config = serde_yaml::from_str(&content)?;
+        config.load_registration(path.as_ref(), registration_field_presence)?;
         config.apply_env_overrides();
         config.normalize();
-        config.load_registration(path.as_ref())?;
         config.validate()?;
         Ok(config)
     }
 
-    pub fn load_from_bytes(bytes: &[u8]) -> Result<Self> {
+    pub fn load_from_bytes(bytes: &[u8]) -> Result<Self, ConfigError> {
         let mut config: Config = serde_yaml::from_slice(bytes)?;
         config.apply_env_overrides();
+        config.normalize();
         config.validate()?;
         Ok(config)
     }
@@ -472,7 +474,11 @@ impl Config {
         }
     }
 
-    fn load_registration(&mut self, config_path: &Path) -> Result<(), ConfigError> {
+    fn load_registration(
+        &mut self,
+        config_path: &Path,
+        registration_field_presence: RegistrationFieldPresence,
+    ) -> Result<(), ConfigError> {
         let registration_path = std::env::var("REGISTRATION_PATH")
             .ok()
             .filter(|value| !value.trim().is_empty())
@@ -485,34 +491,44 @@ impl Config {
 
         let content = std::fs::read_to_string(registration_path)?;
         let registration: RegistrationConfig = serde_yaml::from_str(&content)?;
+        self.merge_registration_from_fallback(registration, registration_field_presence);
+        Ok(())
+    }
 
-        if self.registration.bridge_id.is_empty() {
+    fn merge_registration_from_fallback(
+        &mut self,
+        registration: RegistrationConfig,
+        registration_field_presence: RegistrationFieldPresence,
+    ) {
+        if !registration_field_presence.bridge_id && self.registration.bridge_id.is_empty() {
             self.registration.bridge_id = registration.bridge_id;
         }
-        if self.registration.appservice_token.is_empty() {
+        if !registration_field_presence.appservice_token
+            && self.registration.appservice_token.is_empty()
+        {
             self.registration.appservice_token = registration.appservice_token;
         }
-        if self.registration.homeserver_token.is_empty() {
+        if !registration_field_presence.homeserver_token
+            && self.registration.homeserver_token.is_empty()
+        {
             self.registration.homeserver_token = registration.homeserver_token;
         }
-        if self.registration.sender_localpart == default_sender_localpart()
-            && registration.sender_localpart != default_sender_localpart()
+        if !registration_field_presence.sender_localpart
+            && self.registration.sender_localpart == default_sender_localpart()
         {
             self.registration.sender_localpart = registration.sender_localpart;
         }
-        if self.registration.namespaces.is_empty() && !registration.namespaces.is_empty() {
+        if !registration_field_presence.namespaces && self.registration.namespaces.is_empty() {
             self.registration.namespaces = registration.namespaces;
         }
-        if !self.registration.rate_limited && registration.rate_limited {
-            self.registration.rate_limited = true;
+        if !registration_field_presence.rate_limited && !self.registration.rate_limited {
+            self.registration.rate_limited = registration.rate_limited;
         }
-        if self.registration.protocols == default_registration_protocols()
-            && registration.protocols != default_registration_protocols()
+        if !registration_field_presence.protocols
+            && self.registration.protocols == default_registration_protocols()
         {
             self.registration.protocols = registration.protocols;
         }
-
-        Ok(())
     }
 }
 
@@ -537,6 +553,50 @@ fn resolve_registration_path(config_path: &Path, registration_path: &str) -> Pat
     } else {
         registration_path.to_path_buf()
     }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct RegistrationFieldPresence {
+    bridge_id: bool,
+    appservice_token: bool,
+    homeserver_token: bool,
+    sender_localpart: bool,
+    namespaces: bool,
+    rate_limited: bool,
+    protocols: bool,
+}
+
+fn registration_field_presence_from_config_yaml(
+    content: &str,
+) -> Result<RegistrationFieldPresence, ConfigError> {
+    let parsed: serde_yaml::Value = serde_yaml::from_str(content)?;
+    let Some(root) = parsed.as_mapping() else {
+        return Ok(RegistrationFieldPresence::default());
+    };
+    let registration = root
+        .iter()
+        .find_map(|(key, value)| (key.as_str() == Some("registration")).then_some(value))
+        .and_then(serde_yaml::Value::as_mapping);
+    let Some(registration) = registration else {
+        return Ok(RegistrationFieldPresence::default());
+    };
+
+    Ok(RegistrationFieldPresence {
+        bridge_id: mapping_has_any_key(registration, &["bridge_id", "id"]),
+        appservice_token: mapping_has_any_key(registration, &["appservice_token", "as_token"]),
+        homeserver_token: mapping_has_any_key(registration, &["homeserver_token", "hs_token"]),
+        sender_localpart: mapping_has_any_key(registration, &["sender_localpart"]),
+        namespaces: mapping_has_any_key(registration, &["namespaces"]),
+        rate_limited: mapping_has_any_key(registration, &["rate_limited"]),
+        protocols: mapping_has_any_key(registration, &["protocols", "protocol"]),
+    })
+}
+
+fn mapping_has_any_key(mapping: &serde_yaml::Mapping, keys: &[&str]) -> bool {
+    mapping
+        .keys()
+        .filter_map(serde_yaml::Value::as_str)
+        .any(|name| keys.contains(&name))
 }
 
 fn default_sender_localpart() -> String {
@@ -692,7 +752,31 @@ fn looks_like_placeholder_bot_token(token: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{looks_like_placeholder_bot_token, sanitize_bot_token};
+    use super::{
+        Config, RegistrationConfig, RegistrationFieldPresence, RegistrationNamespaceEntry,
+        RegistrationNamespaces, default_registration_protocols, default_sender_localpart,
+        looks_like_placeholder_bot_token, registration_field_presence_from_config_yaml,
+        sanitize_bot_token,
+    };
+
+    fn config_yaml(registration: &str) -> String {
+        format!(
+            r#"
+bridge:
+  domain: "example.org"
+auth:
+  bot_token: "mfa.real-token"
+logging: {{}}
+database:
+  url: "sqlite://./discord.db"
+room: {{}}
+channel: {{}}
+ghosts: {{}}
+registration:
+{registration}
+"#
+        )
+    }
 
     #[test]
     fn sanitize_bot_token_removes_prefix_and_whitespace() {
@@ -705,5 +789,123 @@ mod tests {
         assert!(looks_like_placeholder_bot_token("YOUR_DISCORD_BOT_TOKEN"));
         assert!(looks_like_placeholder_bot_token("your_bot_token_here"));
         assert!(!looks_like_placeholder_bot_token("mfa.x.y"));
+    }
+
+    #[test]
+    fn registration_fallback_keeps_default_valued_fields_when_present_in_config() {
+        let yaml = config_yaml(
+            r#"  id: "cfg-id"
+  as_token: "cfg-as"
+  hs_token: "cfg-hs"
+  sender_localpart: "_discord_"
+  rate_limited: false
+  protocols:
+    - "discord""#,
+        );
+        let presence = registration_field_presence_from_config_yaml(&yaml).unwrap();
+        let mut config: Config = serde_yaml::from_str(&yaml).unwrap();
+
+        config.merge_registration_from_fallback(
+            RegistrationConfig {
+                bridge_id: "file-id".to_string(),
+                appservice_token: "file-as".to_string(),
+                homeserver_token: "file-hs".to_string(),
+                sender_localpart: "_from_file_".to_string(),
+                namespaces: RegistrationNamespaces {
+                    users: vec![RegistrationNamespaceEntry {
+                        exclusive: true,
+                        regex: "^@_discord_.*".to_string(),
+                    }],
+                    aliases: Vec::new(),
+                    rooms: Vec::new(),
+                },
+                rate_limited: true,
+                protocols: vec!["other".to_string()],
+            },
+            presence,
+        );
+
+        assert_eq!(config.registration.bridge_id, "cfg-id");
+        assert_eq!(config.registration.appservice_token, "cfg-as");
+        assert_eq!(config.registration.homeserver_token, "cfg-hs");
+        assert_eq!(config.registration.sender_localpart, "_discord_");
+        assert!(!config.registration.rate_limited);
+        assert_eq!(config.registration.protocols, vec!["discord".to_string()]);
+    }
+
+    #[test]
+    fn registration_fallback_applies_when_fields_absent_in_config() {
+        let yaml = config_yaml(
+            r#"  id: "cfg-id"
+  as_token: "cfg-as"
+  hs_token: "cfg-hs""#,
+        );
+        let presence = registration_field_presence_from_config_yaml(&yaml).unwrap();
+        let mut config: Config = serde_yaml::from_str(&yaml).unwrap();
+
+        assert_eq!(
+            config.registration.sender_localpart,
+            default_sender_localpart()
+        );
+        assert!(!presence.sender_localpart);
+        assert!(!presence.rate_limited);
+        assert!(!presence.protocols);
+
+        config.merge_registration_from_fallback(
+            RegistrationConfig {
+                bridge_id: "file-id".to_string(),
+                appservice_token: "file-as".to_string(),
+                homeserver_token: "file-hs".to_string(),
+                sender_localpart: "_from_file_".to_string(),
+                namespaces: RegistrationNamespaces::default(),
+                rate_limited: true,
+                protocols: vec!["other".to_string()],
+            },
+            presence,
+        );
+
+        assert_eq!(config.registration.bridge_id, "cfg-id");
+        assert_eq!(config.registration.appservice_token, "cfg-as");
+        assert_eq!(config.registration.homeserver_token, "cfg-hs");
+        assert_eq!(config.registration.sender_localpart, "_from_file_");
+        assert!(config.registration.rate_limited);
+        assert_eq!(config.registration.protocols, vec!["other".to_string()]);
+    }
+
+    #[test]
+    fn registration_presence_detects_alias_keys() {
+        let yaml = config_yaml(
+            r#"  id: "cfg-id"
+  as_token: "cfg-as"
+  hs_token: "cfg-hs"
+  protocol: "discord""#,
+        );
+        let presence: RegistrationFieldPresence =
+            registration_field_presence_from_config_yaml(&yaml).unwrap();
+
+        assert!(presence.bridge_id);
+        assert!(presence.appservice_token);
+        assert!(presence.homeserver_token);
+        assert!(presence.protocols);
+        assert!(!presence.sender_localpart);
+        assert!(!presence.rate_limited);
+        assert!(!presence.namespaces);
+    }
+
+    #[test]
+    fn registration_fallback_uses_default_protocols_when_missing_everywhere() {
+        let yaml = config_yaml(
+            r#"  id: "cfg-id"
+  as_token: "cfg-as"
+  hs_token: "cfg-hs""#,
+        );
+        let presence = registration_field_presence_from_config_yaml(&yaml).unwrap();
+        let mut config: Config = serde_yaml::from_str(&yaml).unwrap();
+
+        config.merge_registration_from_fallback(RegistrationConfig::default(), presence);
+        assert_eq!(
+            config.registration.protocols,
+            default_registration_protocols()
+        );
     }
 }
