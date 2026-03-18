@@ -31,6 +31,48 @@ Contact: `chris@acroidea.com`
 
 ## Quick Start (Local)
 
+### Palpo KDL Configuration
+
+When running with Palpo, you can configure the bridge registration in your `palpo.kdl`:
+
+```kdl
+// Palpo server config — enable appservice bridge loading
+server_name "example.com"
+appservice_registration_dir "appservices"
+```
+
+And create the bridge config file as `config.kdl`:
+
+```kdl
+// Matrix-Discord Bridge Configuration (KDL format)
+// See config/config.example.kdl for all options
+
+bridge {
+    domain "example.com"
+    homeserver_url "http://127.0.0.1:6006"
+    port 9005
+    bind_address "0.0.0.0"
+    bridge_id "discord"
+    appservice_token "put_your_as_token_here"
+    homeserver_token "put_your_hs_token_here"
+    admin_mxid "@admin:example.com"
+}
+
+auth {
+    client_id "YOUR_DISCORD_CLIENT_ID"
+    bot_token "YOUR_DISCORD_BOT_TOKEN"
+    use_privileged_intents false
+}
+
+database {
+    url "sqlite://./discord.db"
+    max_connections 10
+    min_connections 1
+}
+```
+
+### YAML Configuration
+
 1. Create your config file:
 
 ```bash
@@ -90,12 +132,21 @@ auth:
 
 ## Configure Matrix / Palpo (Step by Step)
 
-1. In Palpo config (`palpo.toml`), set your server name and appservice registration directory:
+1. In Palpo config, set your server name and appservice registration directory.
 
-```toml
-server_name = "example.com"
-appservice_registration_dir = "appservices"
-```
+   Using KDL (`palpo.kdl`):
+
+   ```kdl
+   server_name "example.com"
+   appservice_registration_dir "appservices"
+   ```
+
+   Or using TOML (`palpo.toml`):
+
+   ```toml
+   server_name = "example.com"
+   appservice_registration_dir = "appservices"
+   ```
 
 2. Place your bridge registration file under that directory, for example:
    - `appservices/discord-registration.yaml`

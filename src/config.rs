@@ -4,6 +4,8 @@ pub use self::parser::{
     RegistrationConfig, RoomConfig, UserActivityConfig,
 };
 pub use self::validator::ConfigError;
+pub use self::kdl_support::{is_kdl_file, parse_kdl_config};
 
 mod parser;
 mod validator;
+mod kdl_support;
